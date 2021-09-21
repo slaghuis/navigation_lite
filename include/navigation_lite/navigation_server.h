@@ -1,0 +1,9 @@
+#ifndef NAVIGATION_SERVER_H
+#define NAVIGATION_SERVER_H
+
+namespace NavigationNodes
+{
+  enum class ActionStatus {VIRGIN, REJECTED, PROCESSING, SUCCEEDED, FAILED, ABORTED, CANCELED, UNKNOWN};
+}  
+
+#endif  // NAVIGATION_SERVER_H

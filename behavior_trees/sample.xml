@@ -1,0 +1,12 @@
+<root>
+     <BehaviorTree>
+        <Sequence>
+            <ComputePathToPose pose="10,0;1,0;5,0;0.0" path="{planned_path}" />
+            <FollowWaypoints path="{planned_path}" />
+            <Timeout msec="5000">
+                <Spin   radians="2.0" />
+            </Timeout>  
+            <Wait   seconds="5" />  
+        </Sequence>
+     </BehaviorTree>
+ </root>
