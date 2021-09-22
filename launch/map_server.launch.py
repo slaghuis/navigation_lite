@@ -10,7 +10,7 @@ def generate_launch_description():
         'sensors.yaml'
         )
         
-    node=Node(
+    node = Node(
         package = 'navigation_lite',
         name = 'map_server',
         executable = 'map_server',
@@ -18,5 +18,11 @@ def generate_launch_description():
         emulate_tty=True,
         parameters = [config]
     )
+    tf = Node(package = 'tf2_ros',
+                       executable = 'static_transform_publisher',
+                       arguments = ['1000', '1000', '1000',  '0' , '0', '0', 'map', 'odom'])
+
     ld.add_action(node)
+    ld.add_action(tf)
+    
     return ld
