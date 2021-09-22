@@ -14,7 +14,7 @@ map_server:
             addr: 0x29
             timeout: 60000
         transform:
-            frame: sensor0
+            frame: vl53l1x
             posX: 0.03
             posY: -0.07
             posZ: 0.05
