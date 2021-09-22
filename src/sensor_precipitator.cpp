@@ -38,8 +38,7 @@ SensorPrecipitator::SensorPrecipitator(rclcpp::Node::SharedPtr node, std::string
  
   // Transform publisher
   tf_publisher_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(node_);
-                                       
-                                        
+                                                                            
   // Spin up a new thread
   float rate = 20.0;
   std::thread{std::bind(&SensorPrecipitator::execute, this, _1), rate}.detach();                                     
@@ -113,12 +112,13 @@ void SensorPrecipitator::execute(double rate) {
         // Calling lookupTransform with tf2::TimePointZero
         // results in the latest available transform
         // Swapped point_cloud->header.frame_id with "map"
+        // This is dependent on a map->odom->base_link->"sensor" transform chain being in place!!!!! 
         transform = tf_buffer_->lookupTransform(frame_,
                                                    sensor->frame_,
                                                    tf2::TimePointZero);
       } catch (tf2::TransformException & ex) {
         RCLCPP_WARN(node_->get_logger(), "Could not transform %s to %s : %s", 
-                    sensor->frame_.c_str(), "map", ex.what());
+                    sensor->frame_.c_str(), frame_.c_str(), ex.what());
         continue; // skip this reading
       }
 
@@ -172,22 +172,18 @@ void SensorPrecipitator::execute(double rate) {
     }  
     loop_rate.sleep();
   }
-  
-  
 }
 
 
 bool SensorPrecipitator::load_from_file(std::string filename)
 {
-  // map->emplace<ufo::map::OccupancyMap>(filename);
-  RCLCPP_DEBUG(node_->get_logger(), "Author has o idea how to write the file: %s", filename.c_str());
-  return false;
+  return map->read(filename);
 }
 
 bool SensorPrecipitator::write_to_file(std::string filename, bool compressed, int depth)
 {
-  map->write(filename, compressed, depth);
-  return true;
+  return map->write(filename, compressed, depth);
+
 }
 
 bool SensorPrecipitator::reset(double resolution, int depth_levels)
