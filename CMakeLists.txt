@@ -25,12 +25,14 @@ find_package(rclcpp_components REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
-find_package(BehaviorTreeV3)
+find_package(BehaviorTreeV3 REQUIRED)
+find_package(ufomap REQUIRED)
   
 add_library(navigation_action_server SHARED
   src/navigation_server.cpp
@@ -124,15 +126,53 @@ ament_target_dependencies(planner_action_server
   "builtin_interfaces")
 rclcpp_components_register_node(planner_action_server PLUGIN "navigation_lite::PlannerServer" EXECUTABLE planner_server)
 
+add_library(map_publish_server SHARED
+  src/map_server.cpp
+  src/sensor.cpp
+  src/sensor_precipitator.cpp 
+  src/conversions.cpp)
+target_include_directories(map_publish_server PRIVATE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_definitions(map_publish_server
+  PRIVATE "NAVIGATION_LITE_BUILDING_DLL")
+ament_target_dependencies(map_publish_server
+  "rclcpp"
+  "std_msgs"
+  "sensor_msgs"
+  "geometry_msgs"
+  "navigation_interfaces"
+  "tf2"
+  "tf2_ros"
+  "tf2_msgs"
+  "tf2_geometry_msgs" )
+target_link_libraries(map_publish_server
+    UFO::Map
+) 
+target_include_directories(map_publish_server PRIVATE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+rclcpp_components_register_node(map_publish_server PLUGIN "navigation_lite::MapServer" EXECUTABLE map_server)
 
+      
 install(TARGETS
   navigation_action_server
   controller_action_server
   planner_action_server
   recovery_action_server
+  map_publish_server
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
   
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY
+  config
+  DESTINATION share/${PROJECT_NAME}
+)
 
 ament_package()
