@@ -11,7 +11,7 @@ map_server:
         topic: vl53l1x/range
         device:
             type: vl53l1x
-            pin: 14
+            addr: 0x29
             timeout: 60000
         transform:
             frame: sensor0
