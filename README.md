@@ -1,5 +1,5 @@
-# navigation_lite
-A lightweight Navigation stack for the drone, aimed at full 3D navigation.
+# Navigation Lite
+A lightweight Navigation stack for the drone, aimed at full 3D navigation.  Built of the architecture ofr the Navigation2 stack.  I developed this one to learn how to. Much of this code can be used to build plugins for the Navigation2 stack.  The big deviation comes in with the incorporation of the Map Server in the stack.  This passes a UFOMap specific message type to send the map.
 
 ## Navigation Server
 Main interface waiting for messages to fly frompoint A to point B.  This uses a Behviour Tree to achieve the mission.
