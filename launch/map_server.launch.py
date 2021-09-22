@@ -20,7 +20,7 @@ def generate_launch_description():
     )
     tf = Node(package = 'tf2_ros',
                        executable = 'static_transform_publisher',
-                       arguments = ['1000', '1000', '1000',  '0' , '0', '0', 'map', 'odom'])
+                       arguments = ['1000', '1000', '1000',  '0' , '0', '3.14159', 'map', 'odom'])
 
     ld.add_action(node)
     ld.add_action(tf)
