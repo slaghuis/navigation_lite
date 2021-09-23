@@ -29,12 +29,17 @@
 #include "nav_msgs/msg/path.hpp"
 
 #include "navigation_interfaces/action/compute_path_to_pose.hpp"
+#include "navigation_interfaces/msg/ufo_map_stamped.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
 
 #include "navigation_lite/visibility_control.h"
+#include "navigation_lite/conversions.h"
+
+
+#include <ufo/map/occupancy_map.h>
 
 namespace navigation_lite
 {
@@ -49,18 +54,36 @@ public:
   : Node("planner_server", options)
   {
     using namespace std::placeholders;
-
+    
+    subscription_ = this->create_subscription<navigation_interfaces::msg::UfoMapStamped>(
+      "nav_lite/map", 10, std::bind(&PlannerServer::topic_callback, this, _1));
+      
     this->action_server_ = rclcpp_action::create_server<ComputePathToPose>(
       this,
       "nav_lite/compute_path_to_pose",
       std::bind(&PlannerServer::handle_goal, this, _1, _2),
       std::bind(&PlannerServer::handle_cancel, this, _1),
       std::bind(&PlannerServer::handle_accepted, this, _1));
-    RCLCPP_INFO(this->get_logger(), "Action Serever [nav_lite/compute_path_to_pose] started");
+    RCLCPP_INFO(this->get_logger(), "Action Server [nav_lite/compute_path_to_pose] started");
   }
 
 private:
   rclcpp_action::Server<ComputePathToPose>::SharedPtr action_server_;
+  std::shared_ptr<ufo::map::OccupancyMap> map_;
+
+  // MAP SUBSCRIPTION ////////////////////////////////////////////////////////////////////////////////////////////////
+  void topic_callback(const navigation_interfaces::msg::UfoMapStamped::SharedPtr msg) const
+  {
+    // Convert ROS message to a UFOmap
+    if (navigation_interfaces::msgToUfo(msg->map, map_)) {
+      RCLCPP_INFO(this->get_logger(), "UFO Map Conversion successfull.");
+    } else {
+      RCLCPP_WARN(this->get_logger(), "UFO Map Conversion failed.");
+    }
+  }
+  rclcpp::Subscription<navigation_interfaces::msg::UfoMapStamped>::SharedPtr subscription_;
+  
+  // PLANNER ACTION SERVER ///////////////////////////////////////////////////////////////////////////////////////////
 
   rclcpp_action::GoalResponse handle_goal(
     const rclcpp_action::GoalUUID & uuid,
@@ -88,7 +111,7 @@ private:
 
   void execute(const std::shared_ptr<GoalHandleComputePathToPose> goal_handle)
   {
-    RCLCPP_INFO(this->get_logger(), "Executing goal");
+    RCLCPP_DEBUG(this->get_logger(), "Executing goal");
     rclcpp::Rate loop_rate(1);
     const auto goal = goal_handle->get_goal();
     auto result = std::make_shared<ComputePathToPose::Result>();
@@ -102,41 +125,18 @@ private:
     pose.pose.position.y = goal->goal.pose.position.y;
     pose.pose.position.z = goal->goal.pose.position.z;
   
-    //tf2::Quaternion q;
-    //q.setRPY( 0, 0, msg.value()[i].theta );  // Create this quaternion from roll/pitch/yaw (in radians)
-    //q.normalize();
-  
     pose.pose.orientation.x = goal->goal.pose.orientation.x; //q[0];
     pose.pose.orientation.y = goal->goal.pose.orientation.y; //q[1];
     pose.pose.orientation.z = goal->goal.pose.orientation.z; //q[2];
     pose.pose.orientation.w = goal->goal.pose.orientation.w; //q[3];
     
     result->path.poses.push_back(pose);
-    //for (int i = 1; (i < 20) && rclcpp::ok(); ++i) {
-      // Check if there is a cancel request
-    //  if (goal_handle->is_canceling()) {
-    //    result->planning_time = this->now() - start_time;
-    //    goal_handle->canceled(result);
-    //    RCLCPP_INFO(this->get_logger(), "Goal canceled");
-    //    return;
-    //  }
-      // Update path
-    //  result->path.push_back();
-
-//      sequence.push_back(sequence[i] + sequence[i - 1]);
-      // Publish feedback
-      //goal_handle->publish_feedback(feedback);
-      //RCLCPP_INFO(this->get_logger(), "Publish feedback");
-
-    //  loop_rate.sleep();
-    //}
 
     // Check if goal is done
     if (rclcpp::ok()) {
-//      result->sequence = sequence;
       result->planning_time = this->now() - start_time;
       goal_handle->succeed(result);
-      RCLCPP_INFO(this->get_logger(), "Goal succeeded");
+      RCLCPP_DEBUG(this->get_logger(), "Goal succeeded");
     }
   }
 };  // class PlannerServer

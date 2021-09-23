@@ -25,8 +25,6 @@
 SensorPrecipitator::SensorPrecipitator(rclcpp::Node::SharedPtr node, std::string map_topic, std::string map_frame) :
                                      node_(node), frame_(map_frame) {
                                        
-   RCLCPP_DEBUG(node_->get_logger(), "I am here"); 
-                                       
   // ROS Setup
   map_publisher_ = node_->create_publisher<navigation_interfaces::msg::UfoMapStamped>(map_topic, 3);
                                        
