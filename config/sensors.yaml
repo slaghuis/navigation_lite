@@ -1,26 +1,27 @@
 map_server:
   ros__parameters:
-    map_topic: map_server/map
+    map_topic: nav_lite/map
     map_frame: map
+    base_link_frame: base_link
 
 # List of sensors
     sensors: [ sensor0, sensor1 ]
 
 
     sensor0:
-        topic: vl53l1x/range
+        topic: sensor_one/range
         device:
-            type: vl53l1x
-            addr: 0x29
+            type: SRF05
+            pin: 14
             timeout: 60000
         transform:
-            frame: vl53l1x
+            frame: sensor0
             posX: 0.03
             posY: -0.07
             posZ: 0.05
             roll: 0.0
-            pitch: -1.57
-            yaw: 0.0
+            pitch: 0.0
+            yaw: 3.14
     sensor1:
         topic: sensor_two/range
         device:
