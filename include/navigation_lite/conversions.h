@@ -130,7 +130,7 @@ bool msgToUfo(navigation_interfaces::msg::UfoMap const& msg, TreeType& tree)
 	                              std::ios_base::binary);
 	if (!msg.data.empty()) {
 		data_stream.write((char const*)&msg.data[0], msg.data.size());
-		return tree.readData(data_stream, msgToUfo(msg.info.bounding_volume),
+		return tree->readData(data_stream, msgToUfo(msg.info.bounding_volume),
 		                     msg.info.resolution, msg.info.depth_levels,
 		                     msg.info.uncompressed_data_size, msg.info.compressed);
 	}
