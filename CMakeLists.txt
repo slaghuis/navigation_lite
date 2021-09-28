@@ -109,21 +109,27 @@ rclcpp_components_register_node(recovery_action_server PLUGIN "navigation_lite::
 
 
 add_library(planner_action_server SHARED
-  src/planner_server.cpp)
+  src/planner_server.cpp
+  src/conversions.cpp)
 target_include_directories(planner_action_server PRIVATE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_compile_definitions(planner_action_server
   PRIVATE "NAVIGATION_LITE_BUILDING_DLL")
 ament_target_dependencies(planner_action_server
-  "navigation_interfaces"
   "rclcpp"
   "rclcpp_action"
   "rclcpp_components"
   "std_msgs"
+  "sensor_msgs"
   "geometry_msgs"
   "nav_msgs"
-  "builtin_interfaces")
+  "builtin_interfaces"
+  "navigation_interfaces")
+target_link_libraries(planner_action_server
+    UFO::Map
+)   
+
 rclcpp_components_register_node(planner_action_server PLUGIN "navigation_lite::PlannerServer" EXECUTABLE planner_server)
 
 add_library(map_publish_server SHARED
@@ -174,5 +180,6 @@ install(DIRECTORY
   config
   DESTINATION share/${PROJECT_NAME}
 )
+
 
 ament_package()
