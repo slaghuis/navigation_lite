@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /* **********************************************************************
- * Subscribe to tf2 odom->base_link for odometry data
+ * Subscribe to tf2 map->base_link for position and pose data
  * Subscribe to sensor_msgs/msg/Range
  *
  * Action Server responding to navgation_interfaces/action/FollowWaypoints
@@ -124,10 +124,10 @@ private:
     transform_listener_ =
       std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-    // Call on_timer function every half a second (Is this enouh to ensure smooth motion?
+    // Call on_timer function every half a second (Is this enough to ensure smooth motion?
     timer_ = this->create_wall_timer(
       500ms, std::bind(&ControllerServer::on_timer, this));
-    RCLCPP_DEBUG(this->get_logger(), "Transform Listener [odom->base_link] started");  
+    RCLCPP_DEBUG(this->get_logger(), "Transform Listener [map->base_link] started");  
 
     // Create drone velocity publisher
     publisher_ =
@@ -149,12 +149,12 @@ private:
     // Store frame names in variables that will be used to
     // compute transformations
 
-    std::string source_frameid = "odom";
+    std::string source_frameid = "map";
     std::string target_frameid = "base_link";
 
     geometry_msgs::msg::TransformStamped transformStamped;
 
-    // Look up for the transformation between odom and base_link frames
+    // Look up for the transformation between map and base_link frames
     // and save the last position
     try {
       transformStamped = tf_buffer_->lookupTransform(

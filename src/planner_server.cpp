@@ -120,7 +120,7 @@ private:
     
     geometry_msgs::msg::PoseStamped pose;
     pose.header.stamp = this->now();
-    pose.header.frame_id = "map";       // ACTION CONFIRM THE FRAME MAP or odom or base_link
+    pose.header.frame_id = "map"; 
     pose.pose.position.x = goal->goal.pose.position.x;
     pose.pose.position.y = goal->goal.pose.position.y;
     pose.pose.position.z = goal->goal.pose.position.z;

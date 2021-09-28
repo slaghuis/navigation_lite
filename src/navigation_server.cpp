@@ -68,7 +68,7 @@ public:
     transform_listener_ =
       std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-    // Call on_timer function every half a second (Is this enouh to ensure smooth motion?
+    // Call on_timer function every half a second (Is this enough to ensure smooth motion)?
     timer_ = this->create_wall_timer(
       500ms, std::bind(&NavigationServer::on_timer, this));
     // RCLCPP_INFO(this->get_logger(), "Transform Listener [odom->base_link] started");
@@ -130,9 +130,6 @@ private:
     auto & number_of_recoveries = feedback->number_of_recoveries;
     auto & distance_remaining = feedback->distance_remaining;
     auto result = std::make_shared<NavigateToPose::Result>();
-  
-    // This behaviorTree works with corourines.
-    // SEE https://github.com/BehaviorTree/BehaviorTree.CPP/blob/master/examples/t09_async_actions_coroutines.cpp
 
     BehaviorTreeFactory factory;
     Tree tree;
@@ -219,7 +216,7 @@ private:
     // Store frame names in variables that will be used to
     // compute transformations
 
-    std::string source_frameid = "odom";
+    std::string source_frameid = "map";          // Navigate in the map frame.  Depends on a proper tf tree
     std::string target_frameid = "base_link";
 
     geometry_msgs::msg::TransformStamped transformStamped;
