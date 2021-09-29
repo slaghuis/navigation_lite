@@ -126,15 +126,15 @@ navigation_interfaces::msg::BoundingVolume ufoToMsg(
 template <typename TreeType>
 bool msgToUfo(navigation_interfaces::msg::UfoMap const& msg, TreeType& tree)
 {
-	std::stringstream data_stream(std::ios_base::in | std::ios_base::out |
+  std::stringstream data_stream(std::ios_base::in | std::ios_base::out |
 	                              std::ios_base::binary);
-	if (!msg.data.empty()) {
-		data_stream.write((char const*)&msg.data[0], msg.data.size());
-		return tree->readData(data_stream, msgToUfo(msg.info.bounding_volume),
-		                     msg.info.resolution, msg.info.depth_levels,
-		                     msg.info.uncompressed_data_size, msg.info.compressed);
-	}
-	return false;
+  if (!msg.data.empty()) {
+    data_stream.write((char const*)&msg.data[0], msg.data.size());
+    return tree->readData(data_stream, msgToUfo(msg.info.bounding_volume),
+                     msg.info.resolution, msg.info.depth_levels,
+                     msg.info.uncompressed_data_size, msg.info.compressed);
+  }
+  return false;
 }
 
 //
@@ -146,8 +146,8 @@ bool ufoToMsg(TreeType const& tree, navigation_interfaces::msg::UfoMap& msg, boo
               unsigned int depth = 0, int compression_acceleration_level = 1,
               int compression_level = 0)
 {
-	return ufoToMsg(tree, msg, ufo::geometry::BoundingVolume(), compress, depth,
-	                compression_acceleration_level, compression_level);
+  return ufoToMsg(tree, msg, ufo::geometry::BoundingVolume(), compress, depth,
+                compression_acceleration_level, compression_level);
 }
 
 template <typename TreeType, typename BoundingType>
@@ -156,9 +156,9 @@ bool ufoToMsg(TreeType const& tree, navigation_interfaces::msg::UfoMap& msg,
               unsigned int depth = 0, int compression_acceleration_level = 1,
               int compression_level = 0)
 {
-	ufo::geometry::BoundingVolume bv;
-	bv.add(bounding_volume);
-	return ufoToMsg(tree, msg, bv, compress, depth, compression_acceleration_level,
+  ufo::geometry::BoundingVolume bv;
+  bv.add(bounding_volume);
+  return ufoToMsg(tree, msg, bv, compress, depth, compression_acceleration_level,
 	                compression_level);
 }
 
@@ -168,25 +168,25 @@ bool ufoToMsg(TreeType const& tree, navigation_interfaces::msg::UfoMap& msg,
               unsigned int depth = 0, int compression_acceleration_level = 1,
               int compression_level = 0)
 {
-	msg.info.version = tree.getFileVersion();
-	msg.info.id = tree.getTreeType();
-	msg.info.resolution = tree.getResolution();
-	msg.info.depth_levels = tree.getTreeDepthLevels();
-	msg.info.compressed = compress;
-	msg.info.bounding_volume = ufoToMsg(bounding_volume);
+  msg.info.version = tree.getFileVersion();
+  msg.info.id = tree.getTreeType();
+  msg.info.resolution = tree.getResolution();
+  msg.info.depth_levels = tree.getTreeDepthLevels();
+  msg.info.compressed = compress;
+  msg.info.bounding_volume = ufoToMsg(bounding_volume);
 
-	std::stringstream data_stream(std::ios_base::in | std::ios_base::out |
+  std::stringstream data_stream(std::ios_base::in | std::ios_base::out |
 	                              std::ios_base::binary);
-	msg.info.uncompressed_data_size =
-	    tree.writeData(data_stream, bounding_volume, compress, depth,
-	                   compression_acceleration_level, compression_level);
-	if (0 > msg.info.uncompressed_data_size) {
-		return false;
-	}
+  msg.info.uncompressed_data_size =
+     tree.writeData(data_stream, bounding_volume, compress, depth,
+     compression_acceleration_level, compression_level);
+  if (0 > msg.info.uncompressed_data_size) {
+    return false;
+  }
 
-	std::string const& data_string = data_stream.str();
-	msg.data = std::vector<int8_t>(data_string.begin(), data_string.end());
-	return true;
+  std::string const& data_string = data_stream.str();
+  msg.data = std::vector<int8_t>(data_string.begin(), data_string.end());
+  return true;
 }
 
 }  // namespace UfoMap_msgs
