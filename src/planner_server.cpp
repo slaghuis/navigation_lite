@@ -15,9 +15,9 @@
 /* **********************************************************************
  * Action Server responding to navgation_interfaces/action/ComputePathToPose
  *   called only by the Navigation Server
- * Subscribe to sensor_msgs/msg/Range (all of them) to maintain an octree
- *   global map.  (Or is this a seperate server. Still unsure)
- * Responds to the Action Client with a path derived from the Octree
+ * Subscribe to map server [navigation_interfaces/msg/ufo_map_stamped] to 
+ *   receive a maintained octree global map.
+ * Responds to the Action Client with a path derived from the Octree (WORK IN PROGRESS)
  * ***********************************************************************/
 
 #include <functional>
@@ -64,6 +64,12 @@ public:
       std::bind(&PlannerServer::handle_goal, this, _1, _2),
       std::bind(&PlannerServer::handle_cancel, this, _1),
       std::bind(&PlannerServer::handle_accepted, this, _1));
+      
+    // Build a UFO map
+    // 10 cm voxel size                                     
+    double resolution = 0.1;   //Read from parameter  
+    map_ = std::make_shared<ufo::map::OccupancyMap>(resolution); 
+   
     RCLCPP_INFO(this->get_logger(), "Action Server [nav_lite/compute_path_to_pose] started");
   }
 
@@ -76,7 +82,7 @@ private:
   {
     // Convert ROS message to a UFOmap
     if (navigation_interfaces::msgToUfo(msg->map, map_)) {
-      RCLCPP_INFO(this->get_logger(), "UFO Map Conversion successfull.");
+      RCLCPP_DEBUG(this->get_logger(), "UFO Map Conversion successfull.");
     } else {
       RCLCPP_WARN(this->get_logger(), "UFO Map Conversion failed.");
     }
