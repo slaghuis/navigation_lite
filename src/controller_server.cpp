@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /* **********************************************************************
- * Subscribe to tf2 map->base_link for position and pose data
+ * Subscribe to tf2 odom->base_link for position and pose data
  * Subscribe to sensor_msgs/msg/Range
  *
  * Action Server responding to navgation_interfaces/action/FollowWaypoints
@@ -53,12 +53,18 @@
 #include <tf2_ros/buffer.h>
 
 #include "navigation_lite/visibility_control.h"
-#include "navigation_lite/pid.hpp"
+#include "navigation_lite/pid.h"
 
 static const float DEFAULT_MAX_SPEED_XY = 0.25;         // Maximum horizontal speed, in m/s
 static const float DEFAULT_MAX_SPEED_Z = 0.33;          // Maximum vertical speed, in m/s
-static const float DEFAULT_MAX_YAW_SPEED = 0.25;        // Maximum yaw speed in radians/s
+static const float DEFAULT_MAX_YAW_SPEED = 50.0;        // Maximum yaw speed in radians/s  (Really not radians.  More like degrees)
 static const float DEFAULT_WAYPOINT_RADIUS_ERROR = 0.3; // Acceptable XY distance to waypoint deemed as close enough
+
+inline double getAbsoluteDiff2Angles(const double x, const double y, const double c)
+{
+    // c can be PI (for radians) or 180.0 (for degrees);
+    return c - fabs(fmod(fabs(x - y), 2*c) - c);
+}
 
 namespace navigation_lite
 {
@@ -91,7 +97,7 @@ private:
   rclcpp::TimerBase::SharedPtr one_off_timer_;
 
   rclcpp::TimerBase::SharedPtr timer_{nullptr};
-  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr publisher_{nullptr};
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr publisher_;
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
 
@@ -99,25 +105,45 @@ private:
   std::shared_ptr<geometry_msgs::msg::Pose> last_pose = std::make_shared<geometry_msgs::msg::Pose>();
   double last_yaw;
   
+  // PID Controllers  
+  std::shared_ptr<PID> pid_x;
+  std::shared_ptr<PID> pid_z;
+  std::shared_ptr<PID> pid_yaw;
+
   void init() {
     using namespace std::placeholders;
     
     // Only run this once.  Stop the timer that triggered this.
     this->one_off_timer_->cancel();
        
-    // Read node parameters    
+    // Declare node parameters    
     this->declare_parameter<float>("max_speed_xy", DEFAULT_MAX_SPEED_XY);
-    this->get_parameter("max_speed_XY", max_speed_xy_);
-
     this->declare_parameter<float>("max_speed_z", DEFAULT_MAX_SPEED_Z);
-    this->get_parameter("max_speed_Z", max_speed_z_);
-
     this->declare_parameter<float>("max_yaw_speed", DEFAULT_MAX_YAW_SPEED);
-    this->get_parameter("max_yaw_speed", max_yaw_speed_);
-    
+    this->declare_parameter("pid_xy", std::vector<double>{0.7, 0.0, 0.0});
+    this->declare_parameter("pid_z", std::vector<double>{0.7, 0.0, 0.0});
+    this->declare_parameter("pid_yaw", std::vector<double>{0.7, 0.0, 0.0});    
     this->declare_parameter<float>("waypoint_radius_error", DEFAULT_WAYPOINT_RADIUS_ERROR);
+
+    // Read the parameters
+    this->get_parameter("max_yaw_speed", max_yaw_speed_);
+    this->get_parameter("max_speed_xy", max_speed_xy_);
+    this->get_parameter("max_speed_z", max_speed_z_);
     this->get_parameter("waypoint_radius_error", waypoint_radius_error_);
-        
+    
+    rclcpp::Parameter pid_xy_settings_param = this->get_parameter("pid_xy");
+    std::vector<double> pid_xy_settings = pid_xy_settings_param.as_double_array(); 
+    pid_x   = std::make_shared<PID>(0.5, max_speed_xy_, -max_speed_xy_, (float)pid_xy_settings[0], (float)pid_xy_settings[1], (float)pid_xy_settings[2]);
+
+    rclcpp::Parameter pid_z_settings_param = this->get_parameter("pid_z");
+    std::vector<double> pid_z_settings = pid_z_settings_param.as_double_array(); 
+    pid_z   = std::make_shared<PID>(0.5, max_speed_z_, -max_speed_z_, (float)pid_z_settings[0], (float)pid_z_settings[1], (float)pid_z_settings[2]);
+
+    rclcpp::Parameter pid_yaw_settings_param = this->get_parameter("pid_yaw");
+    std::vector<double> pid_yaw_settings = pid_yaw_settings_param.as_double_array(); 
+    pid_yaw   = std::make_shared<PID>(0.5, max_yaw_speed_, -max_yaw_speed_, (float)pid_yaw_settings[0], (float)pid_yaw_settings[1], (float)pid_yaw_settings[2]);
+
+
     // Create a transform listener
     tf_buffer_ =
       std::make_unique<tf2_ros::Buffer>(this->get_clock());
@@ -141,6 +167,7 @@ private:
       std::bind(&ControllerServer::handle_cancel, this, _1),
       std::bind(&ControllerServer::handle_accepted, this, _1));
     RCLCPP_INFO(this->get_logger(), "Action Server [nav_lite/follow_waypoints] started");
+    
   }   
 
 // Transformation Listener/////////////////////////////////////////////////////
@@ -227,13 +254,14 @@ private:
   void execute(const std::shared_ptr<GoalHandleFollowWaypoints> goal_handle)
   {
     RCLCPP_INFO(this->get_logger(), "Executing goal");
-    rclcpp::Rate loop_rate(1);
+    rclcpp::Rate loop_rate(2);
     const auto goal = goal_handle->get_goal();
     auto feedback = std::make_shared<FollowWaypoints::Feedback>();
     auto & current_waypoint = feedback->current_waypoint;
     auto result = std::make_shared<FollowWaypoints::Result>();
     geometry_msgs::msg::Twist setpoint = geometry_msgs::msg::Twist();
             
+    RCLCPP_INFO(this->get_logger(), "Received %d waypoints.", goal->poses.size());        
     current_waypoint = 0;
     for (geometry_msgs::msg::PoseStamped wp : goal->poses ) {
        
@@ -244,16 +272,7 @@ private:
         }
         break;
       }
-      
-//      pid_x.reset();
-//      pid_z.reset();
-//      pid_yaw.reset();
-
-        // PID Controllers.  Should these be parameters?  
-      std::shared_ptr<PID> pid_x   = std::make_shared<PID>(0.5, max_speed_xy_, -max_speed_xy_, 0.7, 0.00, 0.0);
-      std::shared_ptr<PID> pid_z   = std::make_shared<PID>(0.5, max_speed_z_, -max_speed_z_, 0.7, 0.00, 0.0);
-      std::shared_ptr<PID> pid_yaw = std::make_shared<PID>(0.5, max_yaw_speed_, -max_yaw_speed_, 0.7, 0.00, 0);
-      
+            
       double err_x = wp.pose.position.x - last_pose->position.x; 
       double err_y = wp.pose.position.y - last_pose->position.y;
       double distance = sqrt(pow(err_x,2) + pow(err_y,2));
@@ -261,7 +280,7 @@ private:
       // Navigate the drone to this waypoint.
       bool waypoint_is_close = (distance < waypoint_radius_error_);      
       while ( (!waypoint_is_close) && rclcpp::ok()) {
-        
+        RCLCPP_INFO(this->get_logger(), "Waypoint is NOT close. [%.1fm]", distance); 
         // Check if there is a cancel request
         if (goal_handle->is_canceling()) {
           for( long unsigned int i = current_waypoint; i < goal->poses.size(); i++) {        
@@ -290,18 +309,23 @@ private:
           }
         }
 
+        double yaw_error = getAbsoluteDiff2Angles(yaw_to_target, last_yaw, M_PI);
+
         setpoint.angular.x = 0.0;
         setpoint.angular.y = 0.0;
-        setpoint.angular.z = pid_yaw->calculate( yaw_to_target, last_yaw);         // correct yaw
+        setpoint.angular.z = pid_yaw->calculate( 0.0, -yaw_error);         // correct yaw error down to zero
         setpoint.linear.x = 0.0;
         setpoint.linear.y = 0.0;  
         setpoint.linear.z = pid_z->calculate(wp.pose.position.z, last_pose->position.z);  // correct altitude
 
-        bool vehicle_pose_is_good = abs(setpoint.angular.z) < 0.02; 
+        bool vehicle_pose_is_good = yaw_error < 0.087;   // 5 degree error is enough to start flying
         if( vehicle_pose_is_good ) {      
+          RCLCPP_INFO(this->get_logger(), "Direction is GOOD, distance now %d", distance);
           // The PID will return a negative, as we are trying to close the distance down to 0.  (Unless we have overshot the target)
           // for that reason we send a negative distance (sign of a poorly tuned PID)
           setpoint.linear.x = pid_x->calculate(0.0, -distance);                  // fly closer to the target
+        } else {
+          RCLCPP_INFO(this->get_logger(), "Direction is NOT good.  Current %.2f, Target %.2f", last_yaw, yaw_to_target); 
         }
      
         // If obstacle detected, Emergency stop!  Cancel te mission.
@@ -327,7 +351,7 @@ private:
     
     // Correct the yaw to that required in the last waypoint
     //pid_yaw.reset();
-    std::shared_ptr<PID> pid_yaw = std::make_shared<PID>(0.5, max_yaw_speed_, -max_yaw_speed_, 0.7, 0.00, 0);
+    // std::shared_ptr<PID> pid_yaw = std::make_shared<PID>(0.5, max_yaw_speed_, -max_yaw_speed_, 0.7, 0.00, 0);
 
 
     // Calculate the desired yaw
