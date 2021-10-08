@@ -25,6 +25,8 @@
 #include <functional>
 #include <memory>
 #include <thread>
+#include <string>
+#include <sstream>
 
 #include "builtin_interfaces/msg/duration.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
@@ -40,10 +42,12 @@
 
 #include "navigation_lite/visibility_control.h"
 
+#include "navigation_lite/action_read_goal.h"
 #include "navigation_lite/action_wait.h"
 #include "navigation_lite/action_spin.h"
 #include "navigation_lite/action_follow_waypoints.h"
 #include "navigation_lite/action_compute_path_to_pose.h"
+#include "navigation_lite/pose_3D.h"
 
 using namespace std::chrono_literals;
 using namespace BT;
@@ -81,7 +85,7 @@ public:
       std::bind(&NavigationServer::handle_accepted, this, _1));
       RCLCPP_INFO(this->get_logger(), "Action Serever [nav_lite/navigate_to_pose] started");
   }
-
+  
 private:
   rclcpp::TimerBase::SharedPtr timer_{nullptr};
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
@@ -97,7 +101,7 @@ private:
     std::shared_ptr<const NavigateToPose::Goal> goal)
   {
     RCLCPP_INFO(this->get_logger(), "Received request with behaviour tree %s",goal->behavior_tree.c_str());
-    RCLCPP_INFO(this->get_logger(), "Received goal request to fly to [%.2f; %.2f; %.2f]", goal->pose.pose.position.x, goal->pose.pose.position.z, goal->pose.pose.position.z);
+    RCLCPP_INFO(this->get_logger(), "Received goal request to fly to [%.2f; %.2f; %.2f]", goal->pose.pose.position.x, goal->pose.pose.position.y, goal->pose.pose.position.z);
     (void)uuid;
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
   }
@@ -117,6 +121,7 @@ private:
     std::thread{std::bind(&NavigationServer::execute, this, _1), goal_handle}.detach();
   }
 
+  
   void execute(const std::shared_ptr<GoalHandleNavigateToPose> goal_handle)
   {
     RCLCPP_INFO(this->get_logger(), "Executing goal");
@@ -130,17 +135,40 @@ private:
     auto & number_of_recoveries = feedback->number_of_recoveries;
     auto & distance_remaining = feedback->distance_remaining;
     auto result = std::make_shared<NavigateToPose::Result>();
+        
+    // Calculate yaw
+    // Orientation quaternion
+    tf2::Quaternion q(
+      wp.pose.orientation.x,
+      wp.pose.orientation.y,
+      wp.pose.orientation.z,
+      wp.pose.orientation.w);
 
+    // 3x3 Rotation matrix from quaternion
+    tf2::Matrix3x3 m(q);
+
+    // Roll Pitch and Yaw from rotation matrix
+    double roll, pitch, yaw;
+    m.getRPY(roll, pitch, yaw);
+    
+    Pose3D bt_goal_msg;
+    bt_goal_msg.x     = wp.pose.position.x;
+    bt_goal_msg.y     = wp.pose.position.y;
+    bt_goal_msg.z     = wp.pose.position.z;
+    bt_goal_msg.theta = yaw;
+            
     BehaviorTreeFactory factory;
     Tree tree;
     using namespace NavigationNodes;
-    
+        
+    factory.registerNodeType<NavLiteReadGoalAction>("ReadGoal");  //  10,0;1,0;5,0;0.0
     factory.registerNodeType<NavLiteWaitAction>("Wait");
     factory.registerNodeType<NavLiteSpinAction>("Spin");
     factory.registerNodeType<NavLiteFollowWaypointsAction>("FollowWaypoints");
     factory.registerNodeType<NavLiteComputePathToPoseAction>("ComputePathToPose");
-    
+
     tree = factory.createTreeFromFile(goal->behavior_tree);
+    //    tree = factory.createTreeFromFile("/home/eric/ros_ws/navigate.xml");
     RCLCPP_INFO(this->get_logger(), "Tree Loaded");
     
     // Initialise the BT Nodes
@@ -149,7 +177,10 @@ private:
     for( auto& node: tree.nodes )
     {
       // Not a typo: it is "=", not "=="
-      if( auto wait_action = dynamic_cast<NavLiteWaitAction *>( node.get() ))
+      if( auto read_goal_action = dynamic_cast<NavLiteReadGoalAction *>( node.get() ))
+      {
+        read_goal_action->init( node_ptr, bt_goal_msg );
+      } else if( auto wait_action = dynamic_cast<NavLiteWaitAction *>( node.get() ))
       {
         wait_action->init( node_ptr );
       } else if( auto spin_action = dynamic_cast<NavLiteSpinAction *>( node.get() ))
@@ -216,7 +247,7 @@ private:
     // Store frame names in variables that will be used to
     // compute transformations
 
-    std::string source_frameid = "map";          // Navigate in the map frame.  Depends on a proper tf tree
+    std::string source_frameid = "odom";          // Navigate in the map frame.  Depends on a proper tf tree
     std::string target_frameid = "base_link";
 
     geometry_msgs::msg::TransformStamped transformStamped;
