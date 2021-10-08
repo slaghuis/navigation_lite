@@ -64,7 +64,7 @@
 #include <tf2_ros/buffer.h>
 
 #include "navigation_lite/visibility_control.h"
-#include "navigation_lite/pid.h"
+#include "navigation_lite/pid.hpp"
 
 static const float DEFAULT_MAX_SPEED_XY = 0.25;         // Maximum horizontal speed, in m/s
 static const float DEFAULT_MAX_SPEED_Z = 0.33;          // Maximum vertical speed, in m/s
