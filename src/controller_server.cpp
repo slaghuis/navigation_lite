@@ -65,10 +65,15 @@ static const float DEFAULT_YAW_THRESHOLD = 0.025;       // Acceptible YAW to sta
 static const float DEFAULT_ALTITUDE_THRESHOLD = 0.3;    // Acceptible Z distance to altitude deemed as close enough 
 static const int DEFAULT_HOLDDOWN = 2;                  // Time to ensure stability in flight is attained
 
-inline double getAbsoluteDiff2Angles(const double x, const double y, const double c)
+inline double getDiff2Angles(const double x, const double y, const double c)
 {
   // c can be PI (for radians) or 180.0 (for degrees);
-  return c - fabs(fmod(fabs(x - y), 2*c) - c);
+  double d =  fabs(fmod(fabs(x - y), 2*c));
+  double r = d > c ? c*2 - d : d;
+  
+  double sign = (x-y >= 0.0 && x-y <= c) || (x-y <= -c && x-y> -2*c) ? 1.0 : -1.0;
+  return sign * r;                                           
+
 }
 
 namespace navigation_lite
@@ -272,7 +277,7 @@ private:
       double roll, pitch, yaw;
       m.getRPY(roll, pitch, yaw);
       
-      double yaw_error = getAbsoluteDiff2Angles(target_yaw_, yaw, M_PI);
+      double yaw_error = getDiff2Angles(target_yaw_, yaw, M_PI);
       pose_is_close_ = yaw_error < yaw_threshold_;
       
       setpoint.angular.z = pid_yaw->calculate(0, yaw_error);         // correct yaw error down to zero
