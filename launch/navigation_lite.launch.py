@@ -25,10 +25,10 @@ def generate_launch_description():
         name = 'controller_server',
         executable = 'controller_server',
         parameters=[
-            {'max_speed_xy'          : 0.5},
+            {'max_speed_xy'          : 0.7},
             {'max_speed_z'           : 0.33},
             {'max_yaw_speed'         : 0.5},
-            {'waypoint_radius_error' : 0.5},
+            {'waypoint_radius_error' : 0.3},
             {'yaw_threshold'         : 0.087},
             {'pid_xy'                : [0.7, 0.0, 0.0]},
             {'pid_z'                 : [0.7, 0.0, 0.0]},
@@ -59,6 +59,17 @@ def generate_launch_description():
         package = 'navigation_lite',
         name = 'recovery_server',
         executable = 'recovery_server',
+        parameters=[
+            {'max_speed_xy'          : 0.7},
+            {'max_speed_z'           : 0.33},
+            {'max_yaw_speed'         : 0.5},
+            {'waypoint_radius_error' : 0.3},
+            {'yaw_threshold'         : 0.087},
+            {'pid_xy'                : [0.7, 0.0, 0.0]},
+            {'pid_z'                 : [0.7, 0.0, 0.0]},
+            {'pid_yaw'               : [0.7, 0.0, 0.0]},
+            {'holddown'              : 2}
+        ],
         output="screen",
         emulate_tty=True
     )
