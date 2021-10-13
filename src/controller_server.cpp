@@ -370,6 +370,21 @@ private:
     target_y_ = wp.pose.position.y;
     target_z_ = wp.pose.position.z;
     
+    // Orientation quaternion
+    tf2::Quaternion q(
+      wp.pose.orientation.x,
+      wp.pose.orientation.y,
+      wp.pose.orientation.z,
+      wp.pose.orientation.w);
+
+    // 3x3 Rotation matrix from quaternion
+    tf2::Matrix3x3 m(q);
+
+    // Roll Pitch and Yaw from rotation matrix
+    double roll, pitch, yaw;
+    m.getRPY(roll, pitch, yaw);
+    
+    target_yaw_ = yaw;
     
     // Set Scope of work
     tune_x_ = false;
@@ -393,11 +408,11 @@ private:
         loop_rate.sleep();
     }
     
-    tune_x_ = false;    
-    while (!holddown_timer->test(waypoint_is_close_ && altitude_is_close_ && pose_is_close_ )) {
-      // Dont flood the flight controller
-        loop_rate.sleep();
-    }
+//    tune_x_ = false;    
+//    while (!holddown_timer->test(waypoint_is_close_ && altitude_is_close_ && pose_is_close_ )) {
+//      // Dont flood the flight controller
+//        loop_rate.sleep();
+//    }
     RCLCPP_INFO(this->get_logger(), "correct_yaw:END");
     return true;
   }
@@ -501,7 +516,7 @@ private:
       current_waypoint++;
     }
     
-    if (rclcpp::ok() ) correct_yaw(goal->poses.back());      
+    //if (rclcpp::ok() ) correct_yaw(goal->poses.back());      
     if (rclcpp::ok() ) stop_movement();
 
     // Check if goal is done
