@@ -8,7 +8,7 @@ ros2 launch navigation_lite navigation_lite.launch.py
 ## Navigation Server
 Main interface waiting for messages nav_lite/navigate_to_pose to fly from point A to point B.  This uses a Behviour Tree to achieve the mission.  It is assumed that all the coordinates is in the map frame, NEU orientation.
 
-## Commander Server
+## Controller Server
 Will move the drone along a collection of waypoints (the output of the planner server), using obstacle avoidance and a local planner  (Still work in progress).  Will move down the route, but the local planner and obstacle avoidance is still outstanding.
 
 ## Recovery Server
