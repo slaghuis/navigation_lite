@@ -516,7 +516,7 @@ private:
       current_waypoint++;
     }
     
-    //if (rclcpp::ok() ) correct_yaw(goal->poses.back());      
+    if (rclcpp::ok() ) correct_yaw(goal->poses.back());      
     if (rclcpp::ok() ) stop_movement();
 
     // Check if goal is done
