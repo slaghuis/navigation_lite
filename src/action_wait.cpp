@@ -60,6 +60,7 @@ BT::NodeStatus NavLiteWaitAction::tick()
   }    
   
   cleanup();
+  node_->increment_recovery_count();
   return (action_status == ActionStatus::SUCCEEDED) ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
 }
     

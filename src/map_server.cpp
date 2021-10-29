@@ -51,16 +51,15 @@ public:
   {
     using namespace std::placeholders;
     
-    RCLCPP_INFO(this->get_logger(), "Starting up");
-    
     // Create simple services
     load_service = this->create_service<navigation_interfaces::srv::LoadMap>("nav_lite/load_map", std::bind(&MapServer::load_map, this, _1, _2));
     save_service = this->create_service<navigation_interfaces::srv::SaveMap>("nav_lite/save_map", std::bind(&MapServer::save_map, this, _1, _2));
     reset_service = this->create_service<navigation_interfaces::srv::Reset>("nav_lite/reset_map", std::bind(&MapServer::reset_map, this, _1, _2));
    
-    // Read some parameters
+    // Declare some parameters
     this->declare_parameter<std::string>("map_frame", "error");
     this->declare_parameter<std::string>("map_topic", "error");
+    this->declare_parameter<std::string>("base_link_frame", "base_link");
     this->declare_parameter("sensors");
     
     // Kick off a init routine
@@ -77,7 +76,8 @@ public:
     // read parameters
     this->get_parameter("map_frame", map_frame_);
     this->get_parameter("map_topic", map_topic_);
-    RCLCPP_INFO(this->get_logger(), "Map Frame: %s", map_frame_.c_str());
+    this->get_parameter("base_link_frame", base_link_frame_);
+    RCLCPP_DEBUG(this->get_logger(), "Map Frame: %s", map_frame_.c_str());
   
     rclcpp::Parameter sensor_param("sensors", std::vector<std::string>({}));
     this->get_parameter("sensors", sensor_param);
@@ -112,7 +112,7 @@ public:
         this->declare_parameter<float>(*sensorNameIt + ".transform.pos" + c, 0.0);
         if (this->get_parameter(paramStr, translation[c-'X'])) {
           loadTransform = true;
-          RCLCPP_INFO(this->get_logger(), "Loading transform for %s: %f", paramStr.c_str(), translation[c-'X']);
+          RCLCPP_DEBUG(this->get_logger(), "Loading transform for %s: %f", paramStr.c_str(), translation[c-'X']);
         }
       }
     
@@ -133,7 +133,7 @@ public:
         geometry_msgs::msg::TransformStamped t;
 
         t.header.stamp = now;
-        t.header.frame_id = map_frame_;
+        t.header.frame_id = base_link_frame_;  // Changed from map frame.
         //t.child_frame_id = <<<<<<will be set before message sent
 
         t.transform.translation.x = translation[0];
@@ -154,6 +154,7 @@ private:
   // Parameters
   std::string map_frame_;
   std::string map_topic_;    
+  std::string base_link_frame_;
   std::vector<std::string> sensors = {};
     
   std::shared_ptr<SensorPrecipitator> precipitator;
