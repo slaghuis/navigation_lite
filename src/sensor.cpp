@@ -46,7 +46,7 @@ void Sensor::range_callback(const sensor_msgs::msg::Range::SharedPtr msg)
     if (frame_.compare(msg->header.frame_id) == 0) {
         this->range_msg = msg;
         
-        RCLCPP_INFO(node_->get_logger(), "Received range_msg - frame: %s range: %f", frame_.c_str(), range_msg->range);
+        RCLCPP_DEBUG(node_->get_logger(), "Received range_msg - frame: %s range: %f", frame_.c_str(), range_msg->range);
     }
 
 }
