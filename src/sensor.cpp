@@ -40,25 +40,15 @@ void Sensor::set_transform(geometry_msgs::msg::TransformStamped transformS) {
 
 std::shared_ptr<geometry_msgs::msg::TransformStamped> Sensor::get_transform() { return transformS; }
 
-void Sensor::range_callback(const sensor_msgs::msg::Range::SharedPtr msg) const
+void Sensor::range_callback(const sensor_msgs::msg::Range::SharedPtr msg)
 {
     // Check if frame matches range_msg frame_id
     if (frame_.compare(msg->header.frame_id) == 0) {
-        // range_msg = msg;  Why does this not work?
-      
-        // There must be a smarter way to so this
-        range_msg->header.stamp.sec = msg->header.stamp.sec;
-        range_msg->header.stamp.nanosec = msg->header.stamp.nanosec;
-        range_msg->header.frame_id = msg->header.frame_id;
-        range_msg->radiation_type = msg->radiation_type;
-        range_msg->field_of_view = msg->field_of_view;
-        range_msg->min_range = msg->min_range;
-        range_msg->max_range = msg->max_range;
-        range_msg->range = msg->range;
-      
-        //range_msg = std::make_shared<sensor_msgs::msg::Range>(&msg); 
-        RCLCPP_DEBUG(node_->get_logger(), "Received range_msg - frame: %s range: %f", frame_.c_str(), range_msg->range);
+        this->range_msg = msg;
+        
+        RCLCPP_INFO(node_->get_logger(), "Received range_msg - frame: %s range: %f", frame_.c_str(), range_msg->range);
     }
+
 }
 
 float Sensor::get_range() {
