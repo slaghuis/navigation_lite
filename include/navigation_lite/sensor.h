@@ -32,7 +32,7 @@ private:
   std::shared_ptr<sensor_msgs::msg::Range> range_msg;
   std::shared_ptr<geometry_msgs::msg::TransformStamped> transformS;
     
-  void range_callback(const sensor_msgs::msg::Range::SharedPtr msg) const;
+  void range_callback(const sensor_msgs::msg::Range::SharedPtr msg);
 };
 
 #endif
