@@ -114,7 +114,8 @@ rclcpp_components_register_node(recovery_action_server PLUGIN "navigation_lite::
 
 add_library(planner_action_server SHARED
   src/planner_server.cpp
-  src/conversions.cpp)
+  src/conversions.cpp
+  src/d_star_lite.cpp)
 target_include_directories(planner_action_server PRIVATE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -129,6 +130,10 @@ ament_target_dependencies(planner_action_server
   "geometry_msgs"
   "nav_msgs"
   "builtin_interfaces"
+  "tf2"
+  "tf2_ros"
+  "tf2_msgs"
+  "tf2_geometry_msgs" 
   "navigation_interfaces")
 target_link_libraries(planner_action_server
     UFO::Map
