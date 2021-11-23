@@ -15,7 +15,7 @@ Will move the drone along a collection of waypoints (the output of the planner s
 Executes recovery actions to assist the Commander Server. (Still neds one or two recovery actions. (e.g Change altitude x meters?))
 
 ## Planner Server
-Reads an UFO Octree Map from the Map Server and calculates a global flight plan.  Returns a sequence of waypoints for the Commander Server to follow. (Work in progress.  Still need a* algorith or something)
+Reads an UFO Octree Map from the Map Server and calculates a global flight plan.  Returns a sequence of waypoints for the Commander Server to follow. Uses D* Lite path planning.  Still needs to impliment replanning and services to clear the cost map.
 
 ## Map server
 Reads a list of sensors and their transforms from the parameter file and populates OctoMap (UFO Map package).  Published this map to the rest of the naviagation stack.
