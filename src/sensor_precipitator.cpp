@@ -13,11 +13,11 @@
 // limitations under the License.
 
 /**
-    Sensor Class
-    Purpose: Instantiates UFO Map and tfListener using a tfBuffer
-    Adapted from the work of 
-    @author Eliot Lim (github: @eliotlim)
-    @version 1.0 (16/5/17)
+  SensorPrecipitatir Class
+  Purpose: Instantiates UFO Map and tfListener using a tfBuffer
+  Adapted from the work of 
+  @author Eliot Lim (github: @eliotlim)
+  @version 1.0 (16/5/17)
 */
 
 #include <navigation_lite/sensor_precipitator.h>
@@ -43,10 +43,10 @@ SensorPrecipitator::SensorPrecipitator(rclcpp::Node::SharedPtr node, std::string
 }
 
 std::shared_ptr<Sensor> SensorPrecipitator::add_sensor(std::string topic, std::string frame) {
-    auto sensor_ptr = std::shared_ptr<Sensor>(new Sensor(node_, topic, frame));
-    sensors.push_back(sensor_ptr);
-    RCLCPP_DEBUG(node_->get_logger(), "Inserted Sensor - Topic: %s, Frame: %s", topic.c_str(), frame.c_str());
-    return sensor_ptr;
+  auto sensor_ptr = std::shared_ptr<Sensor>(new Sensor(node_, topic, frame));
+  sensors.push_back(sensor_ptr);
+  RCLCPP_INFO(node_->get_logger(), "Inserted Sensor - Topic: %s, Frame: %s", topic.c_str(), frame.c_str());
+  return sensor_ptr;
 }
 
 void SensorPrecipitator::execute(double rate) {
@@ -55,8 +55,10 @@ void SensorPrecipitator::execute(double rate) {
   // Create a UFOMap
   
   // Build a UFO map
-  // 10 cm voxel size                                     
-  double resolution = 0.1;   //Read from parameter
+  // 25 cm voxel size            
+  double resolution = 0.25;   
+  node_->declare_parameter<double>("map_resolution", 0.25);   // use resolution 0.25.  Can then query the map at 0.5 and 1.0
+  node_->get_parameter("map_resolution", resolution);
                                        
   // Maximum range to integrate, in meters.
   // Set to negative value to ignore maximum range.
@@ -127,20 +129,13 @@ void SensorPrecipitator::execute(double rate) {
 
       tf2::doTransform(pt, point_out, transform);
 
-      // Store the point in cloud
-      //  pcl::PointXYZ pcl_point;
-      //  pcl_point.x = point_out.point.x;
-      //  pcl_point.y = point_out.point.y;
-      //  pcl_point.z = point_out.point.z;
+      // Store the point in map
       std::shared_ptr<ufo::map::Point3> ufo_point = std::make_shared<ufo::map::Point3>();
       ufo_point->x() = point_out.point.x;
       ufo_point->y() = point_out.point.y;
       ufo_point->z() = point_out.point.z;
       
       cloud.push_back(*ufo_point);
-
-      //  point_cloud->points.push_back(pcl_point);
-      //  ++(point_cloud->width);
 
     }
     
