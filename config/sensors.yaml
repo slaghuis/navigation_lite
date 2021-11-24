@@ -1,40 +1,53 @@
 map_server:
   ros__parameters:
     map_topic: nav_lite/map
-    map_frame: map
+    map_frame: odom
     base_link_frame: base_link
 
 # List of sensors
-    sensors: [ sensor0, sensor1 ]
-
+    sensors: [ sensor0, sensor1, sensor2 ]
 
     sensor0:
-        topic: sensor_one/range
+        topic: lidar/range
         device:
-            type: SRF05
-            pin: 14
+            type: Garmin LIdar Lite
+            addr: 0x62
             timeout: 60000
         transform:
-            frame: sensor0
-            posX: 0.03
-            posY: -0.07
-            posZ: 0.05
-            roll: 0.0
-            pitch: 0.0
-            yaw: 3.14
-    sensor1:
-        topic: sensor_two/range
-        device:
-            type: SRF10
-            addr: 0xE2
-            timeout: 60000
-        transform:
-            frame: sensor1
-            posX: 0.08
-            posY: -0.05
-            posZ: 0.05
+            frame: base_lidar
+            posX: 0.075
+            posY: 0.00
+            posZ: -0.040
             roll: 0.0
             pitch: 0.0
             yaw: 0.0
-
+    sensor1:
+        topic: vl53l1x/range
+        device:
+            type: vl53l1x
+            addr: 0x29
+            timeout: 60000
+        transform:
+            frame: base_down
+            posX: 0.01
+            posY: -0.06
+            posZ: -0.055
+            roll: 0.0
+            pitch: deg(270)  # straight down
+            yaw: 0.0
+    sensor2:
+        topic: sonar/range
+        device:
+            type: GY-US42
+            addr: 0x70
+            timeout: 60000
+        transform:
+            frame: base_up
+            posX: -0.01
+            posY: -0.045
+            posZ: -0.01
+            roll: 0.0
+            pitch: deg(90)  # Straight up I think
+            yaw: 0.0
+            
 
