@@ -49,8 +49,9 @@ void DStarLite::setTestFunction( function<bool(int, int, int)> func )
 }
 
 void DStarLite::initialize()
-{
-  replanning = false;
+{ 
+  // Start with a clean sheet
+  clearCostmap();
   
   // declare the first node at the position of the goal
   cost_map(goal.at(0),goal.at(1),goal.at(2)) = make_shared<Node>( goal.at(0), goal.at(1), goal.at(2) );      
@@ -97,8 +98,7 @@ int DStarLite::computeShortestPath() {
 }
 
 void DStarLite::replan(int point_x, int point_y, int point_z) {
-  replanning = true;
-  
+
   shared_ptr<Node> node;
   node = cost_map(start.at(point_x), start.at(point_y), start.at(point_z));
   
@@ -197,6 +197,22 @@ int DStarLite::extractPath(vector<geometry_msgs::msg::PoseStamped> &waypoints) {
   } while( !found );
   
   return count;
+}
+
+void DStarLite::clearCostmap() {
+  
+  for(auto z = 0; z < (int)dim_z; z++) {
+    for(auto y = 0; y < (int)dim_y; y++) {
+      for(auto x = 0; x < (int)dim_x; x++) {
+         cost_map(x, y, z) = NULL;   
+      }
+    }
+  }
+  
+  // Also clear the open_list;
+  open_list.clear();
+  
+  // Smart pointers should free up any allocated memory :-)
 }
 
 // Private Methods /////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -301,8 +317,14 @@ void DStarLite::updateVertex(shared_ptr<Node> node)
               transition_cost += 0.4;  // Vertical movement
             }  
             
-            if ((neighbor_node->gScore() + transition_cost) < best_score) {
-              best_score = neighbor_node->gScore() + transition_cost;
+            // add a heuristic:  The hypotenuse of a right-angled triangle in 3D space
+            double xx = static_cast<double>(point.at(0) - goal.at(0));
+            double yy = static_cast<double>(point.at(1) - goal.at(1));
+            double zz = static_cast<double>(point.at(2) - goal.at(2));
+            double h = std::sqrt(xx*xx + yy*yy + zz*zz);
+            
+            if ((neighbor_node->gScore() + transition_cost + (float)h) < best_score) {
+              best_score = neighbor_node->gScore() + transition_cost + (float)h;
               best_candidate = neighbor_node;
             }
                

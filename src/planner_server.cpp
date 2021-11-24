@@ -91,7 +91,22 @@ public:
     map_ = std::make_shared<ufo::map::OccupancyMap>(resolution); 
 
     this->declare_parameter<double>("drone_diameter", 0.80);   // 800 mm for my current craft.
-    this->get_parameter("drone_diameter", drone_diameter_);                                  
+    this->get_parameter("drone_diameter", drone_diameter_);   
+    
+    this->declare_parameter<int>("e_w_size", 500);
+    this->get_parameter("e_w_size", e_size_);   
+
+    this->declare_parameter<int>("n_s_size", 500);
+    this->get_parameter("n_s_size", n_size_);
+    
+    this->declare_parameter<int>("u_size", 10);
+    this->get_parameter("u_size", u_size_);   
+    
+    dsl = new DStarLite(e_size_, n_size_, u_size_);
+    
+    // Set the lookup function to check the UFO map for occupancy
+    auto fn = bind( &PlannerServer::isOccupied, this, _1, _2, _3 );
+    dsl->setTestFunction( fn );
     
     RCLCPP_INFO(this->get_logger(), "Action Server [nav_lite/compute_path_to_pose] started");
   }
@@ -103,6 +118,8 @@ private:
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   double drone_diameter_;
+  DStarLite *dsl;
+  int e_size_, n_size_, u_size_;
   
   float last_x_, last_y_, last_z_;
 
@@ -149,8 +166,18 @@ private:
     const rclcpp_action::GoalUUID & uuid,
     std::shared_ptr<const ComputePathToPose::Goal> goal)
   {
-    RCLCPP_INFO(this->get_logger(), "Received goal request for path to [%.2f;%.2f;%.2f]", goal->goal.pose.position.x, goal->goal.pose.position.y, goal->goal.pose.position.z);
+    RCLCPP_DEBUG(this->get_logger(), "Received goal request for path to [%.2f;%.2f;%.2f]", goal->goal.pose.position.x, goal->goal.pose.position.y, goal->goal.pose.position.z);
     (void)uuid;
+    
+    if ( ((goal->goal.pose.position.x <0) || (goal->goal.pose.position.x > e_size_)) ||
+         ((goal->goal.pose.position.y <0) || (goal->goal.pose.position.y > n_size_)) ||
+         ((goal->goal.pose.position.z <0) || (goal->goal.pose.position.z > u_size_)) ) {
+      RCLCPP_ERROR(this->get_logger(), "Goal of [%.2f;%.2f;%.2f] is outside map range. [%i;%i;%i]", 
+        goal->goal.pose.position.x, goal->goal.pose.position.y, goal->goal.pose.position.z,
+        e_size_, n_size_, u_size_);
+      return rclcpp_action::GoalResponse::REJECT;
+    }     
+    
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
   }
 
@@ -174,27 +201,23 @@ private:
     rclcpp::Rate loop_rate(1);
     const auto goal = goal_handle->get_goal();
     auto result = std::make_shared<ComputePathToPose::Result>();
-        
+           
     auto start_time = this->now();
-    DStarLite dsl(500, 500, 10);
-    
+        
     // # If false, use current robot pose as path start, if true, use start above instead
     if(goal->use_start == true) {
-      dsl.setStart((int)goal->start.pose.position.x, (int)goal->start.pose.position.y, (int)goal->start.pose.position.z);  
+      dsl->setStart((int)goal->start.pose.position.x, (int)goal->start.pose.position.y, (int)goal->start.pose.position.z);  
     } else {
       // use the current robot position.
       read_position();  // From tf2      
-      dsl.setStart(last_x_, last_y_, last_y_);
+      dsl->setStart(last_x_, last_y_, last_y_);
     }
 
-    dsl.setGoal((int)goal->goal.pose.position.x, (int)goal->goal.pose.position.y, (int)goal->goal.pose.position.z);
+    dsl->setGoal((int)goal->goal.pose.position.x, (int)goal->goal.pose.position.y, (int)goal->goal.pose.position.z);    
+    dsl->initialize();   
+    dsl->computeShortestPath();
     
-    auto fn = bind( &PlannerServer::isOccupied, this, _1, _2, _3 );
-    dsl.setTestFunction( fn );
-    dsl.initialize();   
-    dsl.computeShortestPath();
-    
-    int steps = dsl.extractPath(result->path.poses); 
+    int steps = dsl->extractPath(result->path.poses); 
     RCLCPP_DEBUG(this->get_logger(), "Result path is %i elements long.", result->path.poses.size());
     if (steps > 0) {
       // Overwrite the pose on the goal step
