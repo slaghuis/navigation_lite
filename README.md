@@ -21,7 +21,11 @@ Reads an UFO Octree Map from the Map Server and calculates a global flight plan.
 Reads a list of sensors and their transforms from the parameter file and populates OctoMap (UFO Map package).  Published this map to the rest of the naviagation stack.
 
 # Transforms
-The Map Server reads transforms for the range sensors from the configuration file. This is the base_link->sensors transform.  The Map Server further publishes a map in the map frame. The drone_mavsdk node published a map->odom and a odom->base_link transdorm. Ths then forms the complete tf2 tree.  Test it with
+The Map Server reads transforms for the range sensors from the configuration file. This is the base_link->sensors transform.  The Map Server further uses a map in the map frame. The drone_mavsdk node publishes a odom->base_link transdorm. What is needed is a static transform to publish a map->odom transform.  
+```
+ros2 run tf2_ros static_transform_publisher 250 250 0 0 0 0 map odom
+```
+Ths then forms the complete tf2 tree.  Test it with
 ```
 ros2 run tf2_tools view_frames.py
 ```
