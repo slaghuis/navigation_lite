@@ -9,6 +9,7 @@
 #include <vector>       // std::vector
 #include <array>        // std::array
 #include <functional>   // std::function
+#include <cmath>        // std::sqrt
 
 #include "geometry_msgs/msg/pose_stamped.hpp"
 
@@ -91,6 +92,7 @@ class DStarLite {
     void setTestFunction( function<bool(int, int, int)> func);
     void initialize();
     int computeShortestPath();
+    void clearCostmap();
     void replan(int x, int y, int z);
     void updateVertex(shared_ptr<Node> node);
     int extractPath(vector<geometry_msgs::msg::PoseStamped> &waypoints); 
@@ -98,7 +100,6 @@ class DStarLite {
     function<bool(int, int, int)> testFunction;
     size_t dim_x, dim_y, dim_z;
     Cube< shared_ptr<Node> > cost_map;
-    bool replanning;
   
     vector< shared_ptr<Node> > open_list;
     array<int, 3> goal;
