@@ -87,17 +87,17 @@ class DStarLite {
       , cost_map(x, y, z, NULL)
     { }
   
-    void setGoal(int x, int y, int z);
-    void setStart(int x, int y, int z);
-    void setTestFunction( function<bool(int, int, int)> func);
+    void setGoal(float x, float y, float z);
+    void setStart(float x, float y, float z);
+    void setTestFunction( function<bool(float, float, float)> func);
     void initialize();
     int computeShortestPath();
     void clearCostmap();
-    void replan(int x, int y, int z);
+    void replan(float x, float y, float z);
     void updateVertex(shared_ptr<Node> node);
     int extractPath(vector<geometry_msgs::msg::PoseStamped> &waypoints); 
   private:
-    function<bool(int, int, int)> testFunction;
+    function<bool(float, float, float)> testFunction;
     size_t dim_x, dim_y, dim_z;
     Cube< shared_ptr<Node> > cost_map;
   
