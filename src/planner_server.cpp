@@ -19,7 +19,8 @@
  *   receive a maintained octree global map.
  * Responds to the Action Client with a path derived from the Octree 
  * Motion planning algorithm based on the D* Lite algorithm. 
- * Listens to tf2 map->odom to find starting position for path planning.
+ * Listens to tf2 map->base_link to find starting position for path planning.
+ * All calculations done in the map frame
  * ***********************************************************************/
 
 #include <functional>
@@ -121,28 +122,26 @@ private:
   DStarLite *dsl;
   int e_size_, n_size_, u_size_;
   
-  float last_x_, last_y_, last_z_;
-
-  bool read_position()
-  {
-    std::string source_frameid = "odom";
-    std::string target_frameid = map_frame_.c_str();
-    
+  bool read_position(float *x, float *y, float *z)
+  {  
+    std::string from_frame = "base_link_ned"; 
+    std::string to_frame = map_frame_.c_str();
+      
     geometry_msgs::msg::TransformStamped transformStamped;
     
-    // Look up for the transformation between map and odom frames
-    // and save the last position
+    // Look up for the transformation between map and base_link_ned frames
+    // and save the last position in the 'map' frame
     try {
       transformStamped = tf_buffer_->lookupTransform(
-        target_frameid, source_frameid,
+        to_frame, from_frame,
         tf2::TimePointZero);
-        last_x_ = transformStamped.transform.translation.x;
-        last_y_ = transformStamped.transform.translation.y;
-        last_z_ = transformStamped.transform.translation.z;
+        *x = transformStamped.transform.translation.x;
+        *y = transformStamped.transform.translation.y;
+        *z = transformStamped.transform.translation.z;
     } catch (tf2::TransformException & ex) {
       RCLCPP_DEBUG(
         this->get_logger(), "Could not transform %s to %s: %s",
-        target_frameid.c_str(), source_frameid.c_str(), ex.what());
+        to_frame.c_str(), from_frame.c_str(), ex.what());
       return false;  
     }
     return true;
@@ -169,6 +168,7 @@ private:
     RCLCPP_DEBUG(this->get_logger(), "Received goal request for path to [%.2f;%.2f;%.2f]", goal->goal.pose.position.x, goal->goal.pose.position.y, goal->goal.pose.position.z);
     (void)uuid;
     
+    /*
     if ( ((goal->goal.pose.position.x <0) || (goal->goal.pose.position.x > e_size_)) ||
          ((goal->goal.pose.position.y <0) || (goal->goal.pose.position.y > n_size_)) ||
          ((goal->goal.pose.position.z <0) || (goal->goal.pose.position.z > u_size_)) ) {
@@ -177,6 +177,7 @@ private:
         e_size_, n_size_, u_size_);
       return rclcpp_action::GoalResponse::REJECT;
     }     
+    */
     
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
   }
@@ -206,19 +207,26 @@ private:
         
     // # If false, use current robot pose as path start, if true, use start above instead
     if(goal->use_start == true) {
+      RCLCPP_DEBUG(this->get_logger(), "Planning a path from %.2f, %.2f, %.2f",
+        goal->start.pose.position.x, 
+        goal->start.pose.position.y, 
+        goal->start.pose.position.z);
       dsl->setStart((int)goal->start.pose.position.x, (int)goal->start.pose.position.y, (int)goal->start.pose.position.z);  
     } else {
       // use the current robot position.
-      read_position();  // From tf2      
-      dsl->setStart(last_x_, last_y_, last_y_);
+      float x, y, z;
+      read_position(&x, &y, &z);  // From tf2      
+      dsl->setStart(x, y, z);
+      RCLCPP_INFO(this->get_logger(), "Planning a path from %.2f, %.2f, %.2f", x, y, z);
     }
 
+    /*
     dsl->setGoal((int)goal->goal.pose.position.x, (int)goal->goal.pose.position.y, (int)goal->goal.pose.position.z);    
     dsl->initialize();   
     dsl->computeShortestPath();
     
     int steps = dsl->extractPath(result->path.poses); 
-    RCLCPP_DEBUG(this->get_logger(), "Result path is %i elements long.", result->path.poses.size());
+    RCLCPP_INFO(this->get_logger(), "Result path is %i steps long.", result->path.poses.size());
     if (steps > 0) {
       // Overwrite the pose on the goal step
       result->path.poses.back().pose.orientation.x = goal->goal.pose.orientation.x;
@@ -226,7 +234,23 @@ private:
       result->path.poses.back().pose.orientation.z = goal->goal.pose.orientation.z;
       result->path.poses.back().pose.orientation.w = goal->goal.pose.orientation.w; 
     }
+    */
     
+    
+    geometry_msgs::msg::PoseStamped pose;
+    // pose.header.stamp = this->now();
+    pose.header.frame_id = "map"; 
+    pose.pose.position.x = goal->goal.pose.position.x;
+    pose.pose.position.y = goal->goal.pose.position.y;
+    pose.pose.position.z = goal->goal.pose.position.z;
+  
+    pose.pose.orientation.x = goal->goal.pose.orientation.x;
+    pose.pose.orientation.y = goal->goal.pose.orientation.y; 
+    pose.pose.orientation.z = goal->goal.pose.orientation.z; 
+    pose.pose.orientation.w = goal->goal.pose.orientation.w;   
+    
+    result->path.poses.push_back(pose);
+     
     
     // Check if goal is done
     if (rclcpp::ok()) {
@@ -236,7 +260,7 @@ private:
     }
   }
   
-  bool isOccupied(const int x, int y, int z)
+  bool isOccupied(const float x, float y, float z)
   {
     // Would it be better to see if the robot can travel between current position (tf_listener)
     // and the target posiiton ina straight line.  Then the granularity of my d*lite algoritm and

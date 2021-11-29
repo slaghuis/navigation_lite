@@ -13,17 +13,18 @@
 // limitations under the License.
 
 /* **********************************************************************
- * Subscribe to tf2 odom->base_link for position and pose data
- * Subscribe to sensor_msgs/msg/Range
+ * Subscribe to tf2 map->base_link for position and pose data
+ * Subscribe to nav_lite/map [navigation_interfaces::msg::UfoMapStamped] 
  *
  * Action Server responding to navgation_interfaces/action/FollowWaypoints
  *   called only by the Navigation Server
  * Publishes cmd_vel as geometry_msgs/msg/Twist to effect motion.
- * Motion would be:
+ * The morion strategy would be:
  *   - Amend yaw, to point to the next waypoint
  *   - Increase foreward velocity to reach desitnation, using a PID 
  *       controller to govern speed
- *   - If an obstacle is encountered, stop and fail (requesting recovery)
+ *   - If an obstacle is encountered, stop movement and return a list of
+ *     waypoints that have not been reached.
  *
  * A Mutex lock governs that only one action server can control the drone
  *  at a time.  Who knows what would happen if another node starts sending 
@@ -33,17 +34,22 @@
 
 #include <functional>
 #include <memory>
+#include <chrono>
+#include <string>
 #include <thread>
+#include <limits>       // std::numeric_limits
 #include <mutex>
 
 #include "builtin_interfaces/msg/duration.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include "nav_msgs/msg/path.hpp"
 
 #include "navigation_interfaces/action/follow_waypoints.hpp"
 #include "navigation_interfaces/action/spin.hpp"
 #include "navigation_interfaces/action/wait.hpp"
+#include "navigation_interfaces/msg/ufo_map_stamped.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -53,9 +59,12 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
 
+#include <ufo/map/occupancy_map.h>
+
 #include "navigation_lite/visibility_control.h"
 #include "navigation_lite/pid.hpp"
 #include "navigation_lite/holddown_timer.hpp"
+#include "navigation_lite/conversions.h"
 
 static const float DEFAULT_MAX_SPEED_XY = 2.0;          // Maximum horizontal speed, in m/s
 static const float DEFAULT_MAX_SPEED_Z = 0.33;          // Maximum vertical speed, in m/s
@@ -71,7 +80,7 @@ inline double getDiff2Angles(const double x, const double y, const double c)
   double d =  fabs(fmod(fabs(x - y), 2*c));
   double r = d > c ? c*2 - d : d;
   
-  double sign = (x-y >= 0.0 && x-y <= c) || (x-y <= -c && x-y> -2*c) ? 1.0 : -1.0;
+  double sign = ((x-y >= 0.0) && (x-y <= c)) || ((x-y <= -c) && (x-y> -2*c)) ? 1.0 : -1.0;
   return sign * r;                                           
 
 }
@@ -106,13 +115,12 @@ private:
   
   // Clock
   rclcpp::Clock steady_clock_{RCL_STEADY_TIME};
-
   rclcpp::TimerBase::SharedPtr one_off_timer_;
 
-  rclcpp::TimerBase::SharedPtr timer_{nullptr};
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr publisher_;
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::string map_frame_;
   
   // PID Controllers  
   std::shared_ptr<PID> pid_x;
@@ -122,11 +130,10 @@ private:
   // Holddown Timer
   std::shared_ptr<HolddownTimer> holddown_timer;
   
-  // Global Variables
-  bool tune_x_, tune_z_, tune_yaw_, calculate_yaw_;
-  bool waypoint_is_close_, altitude_is_close_, pose_is_close_;
-  float target_x_, target_y_, target_z_, target_yaw_;
-  
+  // UFO Map
+  std::shared_ptr<ufo::map::OccupancyMap> map_;
+  double drone_diameter_;
+    
   void init() {
     using namespace std::placeholders;
     
@@ -175,14 +182,24 @@ private:
     // Set up the hoddown timer
     holddown_timer = std::make_shared<HolddownTimer>(holddown_);
     
-    // Call on_timer function every half a second (Is this enough to ensure smooth motion?
-    timer_ = this->create_wall_timer(
-      500ms, std::bind(&ControllerServer::on_timer, this));
-    RCLCPP_DEBUG(this->get_logger(), "Transform Listener [map->base_link] started");  
-
     // Create drone velocity publisher
     publisher_ =
       this->create_publisher<geometry_msgs::msg::Twist>("drone/cmd_vel", 1);
+
+    this->declare_parameter<std::string>("map_frame", "map");
+    this->get_parameter("map_frame", map_frame_);
+      
+    // Build a UFO map
+    double resolution = 0.25;   
+    this->declare_parameter<double>("map_resolution", 0.25);   // use resolution 0.25.  Can then query the map at 0.5 and 1.0
+    this->get_parameter("map_resolution", resolution);
+    map_ = std::make_shared<ufo::map::OccupancyMap>(resolution); 
+
+    this->declare_parameter<double>("drone_diameter", 0.80);   // 800 mm for my current craft.
+    this->get_parameter("drone_diameter", drone_diameter_);   
+
+    subscription_ = this->create_subscription<navigation_interfaces::msg::UfoMapStamped>(
+      "nav_lite/map", 10, std::bind(&ControllerServer::topic_callback, this, _1));
 
     // Create the action server
     this->action_server_ = rclcpp_action::create_server<FollowWaypoints>(
@@ -194,235 +211,156 @@ private:
     RCLCPP_INFO(this->get_logger(), "Action Server [nav_lite/follow_waypoints] started");
     
   }   
-
-// Transformation Listener/////////////////////////////////////////////////////
-  void on_timer()
-  {
-    // Store frame names in variables that will be used to
-    // compute transformations
-
-    std::string source_frameid = "base_link";         // Odometry is published in odom frame
-    std::string target_frameid = "odom";    // The drone is base_link frame.  
-
-    geometry_msgs::msg::TransformStamped transformStamped;
-
-    // Look up for the transformation between map and base_link frames
-    // and save the last position
-    try {
-      transformStamped = tf_buffer_->lookupTransform(
-        target_frameid, source_frameid,
-        tf2::TimePointZero);
-    } catch (tf2::TransformException & ex) {
-      RCLCPP_DEBUG(
-        this->get_logger(), "Could not transform %s to %s: %s",
-        target_frameid.c_str(), source_frameid.c_str(), ex.what());
-      return;
-    }
-
-    // Calculate deviation from required position and pose
-    // See REP-103.  
-    // The body standard is
-    // x foreward, y left, z up.
-    //  The Cartesian representation is east north up, 
-    // x east, y north, z up. 
-    // and the compass turns CLOCKWISE.
-    // Since we work in the base link frame Front LEFT Up and the compass turns CLOCKWISE,
-    // We have to swing y around.
-    float err_x = target_x_- transformStamped.transform.translation.x; 
-    float err_y = transformStamped.transform.translation.y - target_y_;
-    float err_dist = sqrt(pow(err_x,2) + pow(err_y,2));        
-    waypoint_is_close_ = (err_dist < waypoint_radius_error_);
-
-    float err_z = transformStamped.transform.translation.z - target_z_;
-    altitude_is_close_ = ( abs(err_z) < altitude_threshold_);
-       
-    geometry_msgs::msg::Twist setpoint = geometry_msgs::msg::Twist();
-    setpoint.linear.y = 0.0;
-    setpoint.angular.x = 0.0;
-    setpoint.angular.y = 0.0;
-    
-    if(tune_yaw_) {
-      // Calculate yaw
-      
-      double yaw_to_target = (err_x == 0.0) ? atan(err_y / 0.00001) : atan(err_y / err_x);  //Avoid division by zero
-      
-      if (err_x < 0.0) {
-        if(err_y > 0.0) {
-          yaw_to_target += M_PI;
-        } else {
-          yaw_to_target -= M_PI;
-        }
-      }      
-      target_yaw_ = (calculate_yaw_)?yaw_to_target:target_yaw_;
-    
-      RCLCPP_DEBUG(this->get_logger(), "Drone at %.2f,%.2f,%.2f going to %.2f,%.2f Target Yaw %.2f", 
-          transformStamped.transform.translation.x,
-          transformStamped.transform.translation.y,
-          transformStamped.transform.translation.z,
-          target_x_,
-          target_y_,
-          target_yaw_);
-          
-      // Orientation quaternion
-      tf2::Quaternion q(
-        transformStamped.transform.rotation.x,
-        transformStamped.transform.rotation.y,
-        transformStamped.transform.rotation.z,
-        transformStamped.transform.rotation.w);
-
-      // 3x3 Rotation matrix from quaternion
-      tf2::Matrix3x3 m(q);
-
-      // Roll Pitch and Yaw from rotation matrix
-      double roll, pitch, yaw;
-      m.getRPY(roll, pitch, yaw);
-      
-      double yaw_error = getDiff2Angles(target_yaw_, yaw, M_PI);
-      pose_is_close_ = yaw_error < yaw_threshold_;
-      
-      setpoint.angular.z = pid_yaw->calculate(0, yaw_error);         // correct yaw error down to zero
-      RCLCPP_DEBUG(this->get_logger(), "Yaw at %.2f, going to %.2f Speeed:%.2f", 
-          yaw,
-          target_yaw_,
-          setpoint.angular.z);
-    } else {
-      setpoint.angular.z = 0.0;
-    }
-    
-    if(tune_x_ && pose_is_close_) {                    // alternatively check against setpoint.angular.z
-      setpoint.linear.x = pid_x->calculate(0, -err_dist);  // fly
-      RCLCPP_DEBUG(this->get_logger(), "Drone at %.2f,%.2f going to %.2f,%.2f Delta:%.2f, Speed:%.2f", 
-          transformStamped.transform.translation.x,
-          transformStamped.transform.translation.y,
-          target_x_,
-          target_y_,
-          err_dist,
-          setpoint.linear.x);
-    } else {
-      setpoint.linear.x = 0.0;
-    }
-
-    if(tune_z_) {
-      setpoint.linear.z = pid_z->calculate(0, err_z);  // correct altitude
-    } else {
-      setpoint.linear.z = 0.0;
-    }
-    
-    // Ask the drone to turn
-    if( tune_x_ || tune_z_ || tune_yaw_)
-      publisher_->publish(setpoint);
-    
-  }
   
-  /* ************************************************************
-   * Set the global parameters to invoke velocity settings by the 
-   * transfom timer callback above
-   * ************************************************************/
+// MAP SUBSCRIPTION ////////////////////////////////////////////////////////////////////////////////////////////////
+  void topic_callback(const navigation_interfaces::msg::UfoMapStamped::SharedPtr msg) const
+  {
+    // Convert ROS message to a UFOmap
+    if (navigation_interfaces::msgToUfo(msg->map, map_)) {
+      RCLCPP_DEBUG(this->get_logger(), "UFO Map Conversion successfull.");
+    } else {
+      RCLCPP_WARN(this->get_logger(), "UFO Map Conversion failed.");
+    }
+  }
+  rclcpp::Subscription<navigation_interfaces::msg::UfoMapStamped>::SharedPtr subscription_;
+  
+
+// FLIGHT CONTROL /////////////////////////////////////////////////////
+  
   bool fly_to_waypoint(geometry_msgs::msg::PoseStamped wp) {
-    rclcpp::Rate loop_rate(3);
-    
+    rclcpp::Rate loop_rate(2);
+
+    bool waypoint_is_close_, altitude_is_close_, pose_is_close_;
+    float target_x_, target_y_, target_z_;
+
     target_x_ = wp.pose.position.x;
     target_y_ = wp.pose.position.y;
     target_z_ = wp.pose.position.z;
-    
-    // Set Scope of work
-    tune_x_ = false;
-    tune_z_ = true;
-    tune_yaw_ = true;
-    calculate_yaw_ = true;
-    
-    // Reset Global Indicators
-    waypoint_is_close_ = false;
-    pose_is_close_ = false;
-    altitude_is_close_ = false;
-    
-    // Reset PID Controllers
-    pid_x->restart_control();
+   
+    geometry_msgs::msg::Twist setpoint = geometry_msgs::msg::Twist();
+    setpoint.linear.x = 0.0;
+    setpoint.linear.y = 0.0;
+    setpoint.linear.z = 0.0;
+    setpoint.angular.x = 0.0;
+    setpoint.angular.y = 0.0;
+    setpoint.angular.z = 0.0;
+
+    double x, y, z, w;
+    float err_x, err_y, err_z, err_dist;
+    double yaw_to_target;
+    double yaw_error;
+
+    // First correct the yaw        
     pid_yaw->restart_control();
+
+    do {
+      read_position(&x, &y, &z, &w);  // Current position according to tf2
+
+      err_x = target_x_ - x; 
+      err_y = target_y_ - y;
+      yaw_to_target = atan2(err_y, err_x);
+      
+      yaw_error = getDiff2Angles(yaw_to_target, w, M_PI);
+      pose_is_close_ = (fabs(yaw_error) < yaw_threshold_);
+      if (pose_is_close_) {
+        break;
+      }
+      setpoint.angular.z = pid_yaw->calculate(0, -yaw_error);         // correct yaw error down to zero  
+      
+      publisher_->publish(setpoint);
+      loop_rate.sleep();  // Give the drone time to move
+    } while (!pose_is_close_);  
+
+    // Now that we are ponting, keep on adjusting yaw, but include altitude and froeward velocity
+    pid_x->restart_control();
     pid_z->restart_control();
+    do {
+      read_position(&x, &y, &z, &w);  // Current position according to tf2
+
+      err_x = target_x_ - x; 
+      err_y = target_y_ - y;
+      err_z = target_z_ - z;
+
+      err_dist = sqrt(pow(err_x,2) + pow(err_y,2));        
+      waypoint_is_close_ = (err_dist < waypoint_radius_error_);
+
+      altitude_is_close_ = ( abs(err_z) < altitude_threshold_);
     
-    RCLCPP_INFO(this->get_logger(), "fly_to_waypoint:Correcting yaw START");
-    while ( !holddown_timer->test(pose_is_close_) ) {
-      // Dont flood the flight controller
-        loop_rate.sleep();
-    }
-    RCLCPP_INFO(this->get_logger(), "fly_to_waypoint:Correcting yaw END");
+      yaw_to_target = atan2(err_y, err_x);      
+      yaw_error = getDiff2Angles(yaw_to_target, w, M_PI);
+      pose_is_close_ = (fabs(yaw_error) < yaw_threshold_);
+      
+      if (!(waypoint_is_close_ && altitude_is_close_)) {
+        setpoint.angular.z = pid_yaw->calculate(0, -yaw_error);         // correct yaw error down to zero  
+        setpoint.linear.z = pid_z->calculate(0, -err_z);                // correct altitude
+        setpoint.linear.x = pid_x->calculate(0, -err_dist);              // fly
+      } else {
+        // Stop motion
+        setpoint.angular.z = 0;
+        setpoint.linear.z = 0;
+        setpoint.linear.x = 0;
+      }         
+      publisher_->publish(setpoint);
+      loop_rate.sleep();  // Give the drone time to move
+    }  while (!(waypoint_is_close_ && altitude_is_close_)); 
     
-    // Set Scope of work
-    tune_x_ = true;
-    tune_z_ = false;
-    tune_yaw_ = true;
-    calculate_yaw_ = true;       
-    RCLCPP_INFO(this->get_logger(), "fly_to_waypoint:move START");
-//    while ( !holddown_timer->test(waypoint_is_close_ && altitude_is_close_ && pose_is_close_ )) {
-    while ( !holddown_timer->test(waypoint_is_close_ && altitude_is_close_ )) {
-      // Dont flood the flight controller
-        loop_rate.sleep();
-    }
-    RCLCPP_INFO(this->get_logger(), "fly_to_waypoint:move END");
     return true;
+
   }
   
   bool correct_yaw(geometry_msgs::msg::PoseStamped wp) {
-    rclcpp::Rate loop_rate(3);
-    RCLCPP_INFO(this->get_logger(), "correct_yaw:START");    
-    target_x_ = wp.pose.position.x;
-    target_y_ = wp.pose.position.y;
-    target_z_ = wp.pose.position.z;
+  
+    rclcpp::Rate loop_rate(2);
     
     // Orientation quaternion
     tf2::Quaternion q(
-      wp.pose.orientation.x,
-      wp.pose.orientation.y,
-      wp.pose.orientation.z,
-      wp.pose.orientation.w);
-
+        wp.pose.orientation.x,
+        wp.pose.orientation.y,
+        wp.pose.orientation.z,
+        wp.pose.orientation.w);
+        
     // 3x3 Rotation matrix from quaternion
     tf2::Matrix3x3 m(q);
 
     // Roll Pitch and Yaw from rotation matrix
-    double roll, pitch, yaw;
+    double roll, pitch, yaw; 
     m.getRPY(roll, pitch, yaw);
     
-    target_yaw_ = yaw;
+      
+    bool  pose_is_close_;
     
-    // Set Scope of work
-    tune_x_ = false;
-    tune_z_ = true;
-    tune_yaw_ = true;
-    calculate_yaw_ = false;
-    
-    // Reset PID Controllers
-    pid_x->restart_control();
-    pid_yaw->restart_control();
-    pid_z->restart_control();
+    geometry_msgs::msg::Twist setpoint = geometry_msgs::msg::Twist();
+    setpoint.linear.x = 0.0;
+    setpoint.linear.y = 0.0;
+    setpoint.linear.z = 0.0;
+    setpoint.angular.x = 0.0;
+    setpoint.angular.y = 0.0;
+    setpoint.angular.z = 0.0;
 
-    // Reset Global Indicators
-    waypoint_is_close_ = false;
-    pose_is_close_ = false;
-    altitude_is_close_ = false;
-        
-    while (!holddown_timer->test(pose_is_close_)) {
-      // Dont flood the flight controller
-      // The transform listener will tick every loop and update the status of the global variables.
-        loop_rate.sleep();
-    }
+    double x, y, z, w;
+    double yaw_error;
+      
+    pid_yaw->restart_control();
+
+    do {
+      read_position(&x, &y, &z, &w);  
+      
+      yaw_error = getDiff2Angles(yaw, w, M_PI);
+      pose_is_close_ = (fabs(yaw_error) < yaw_threshold_);
+      if (pose_is_close_) {
+        break;
+      }
+      setpoint.angular.z = pid_yaw->calculate(0, -yaw_error);         // correct yaw error down to zero  
+      
+      publisher_->publish(setpoint);
+      loop_rate.sleep();  // Give the drone time to move
+    } while (!pose_is_close_); 
     
-//    tune_x_ = false;    
-//    while (!holddown_timer->test(waypoint_is_close_ && altitude_is_close_ && pose_is_close_ )) {
-//      // Dont flood the flight controller
-//        loop_rate.sleep();
-//    }
-    RCLCPP_INFO(this->get_logger(), "correct_yaw:END");
     return true;
   }
-  
+
   bool stop_movement() {
     rclcpp::Rate loop_rate(2);
-    RCLCPP_INFO(this->get_logger(), "stopping movement");
-    tune_x_ = false;
-    tune_z_ = false;
-    tune_yaw_ = false;
     
     geometry_msgs::msg::Twist setpoint = geometry_msgs::msg::Twist();
     
@@ -474,29 +412,22 @@ private:
 
   void execute(const std::shared_ptr<GoalHandleFollowWaypoints> goal_handle)
   {
-    RCLCPP_INFO(this->get_logger(), "Executing goal");
-    rclcpp::Rate loop_rate(2);
     const auto goal = goal_handle->get_goal();
     auto feedback = std::make_shared<FollowWaypoints::Feedback>();
     auto & current_waypoint = feedback->current_waypoint;
     auto result = std::make_shared<FollowWaypoints::Result>();
-    
-            
-    RCLCPP_DEBUG(this->get_logger(), "Received %d waypoints.", goal->poses.size());        
+              
     current_waypoint = 0;
-    for (geometry_msgs::msg::PoseStamped wp : goal->poses ) {
-       
-      if (!rclcpp::ok()) {
-        // Something is amis. Record some feedback and break out of the loop.
-        for( long unsigned int i = current_waypoint; i < goal->poses.size(); i++) {        
-          result->missed_waypoints.push_back(i);
-        }
-        break;
-      }
-      
-            // Check if there is a cancel request
+    unsigned int last_reached_waypoint = std::numeric_limits<unsigned int>::max();
+    
+    // Start at the goal, and search through all the waypoints till the first one that I can fly
+    // to without an obstacle.  If nothing is found, fail gracefully back.  If one is found, fly 
+    // straight to it, without going through all the other waypoints.
+    while ( (current_waypoint < goal->poses.size()) && (rclcpp::ok()) ) {
+          
+      // Check if there is a cancel request
       if (goal_handle->is_canceling()) {
-        for( long unsigned int i = current_waypoint; i < goal->poses.size(); i++) {        
+        for( size_t i = current_waypoint; i < goal->poses.size(); i++) {        
           result->missed_waypoints.push_back(i);
         }
         goal_handle->canceled(result);
@@ -505,31 +436,161 @@ private:
         server_mutex.unlock();
         return;
       }
-
-      fly_to_waypoint(wp);
-            
-      // Publish feedback
-      goal_handle->publish_feedback(feedback);  // Current waypoint
-      RCLCPP_INFO(this->get_logger(), "Reached waypoint %d", current_waypoint);
       
-      loop_rate.sleep();
-      current_waypoint++;
-    }
+      // Optimistically search for a next waypoint that has a clear path from the current position
+      unsigned int proposed_waypoint;
+      bool found_valid_path = false;
+      for( size_t i = current_waypoint; i < goal->poses.size(); i++) {
+        geometry_msgs::msg::PoseStamped wp = goal->poses[i];
+      
+        if (isPathClear(wp.pose.position.x,
+                        wp.pose.position.y,
+                        wp.pose.position.z)) {
+           found_valid_path = true;
+           proposed_waypoint = i;
+        } else {
+          break;   // Found an obstacle, no need to search further.
+        }  
+      }
+      if (found_valid_path) {
+        current_waypoint = proposed_waypoint;    
+      } else {
+        // I have nowhere to fly to.  Stop flying.
+        break;
+      }
+      
+      if (fly_to_waypoint( goal->poses[current_waypoint] ) ) {
+        last_reached_waypoint = current_waypoint;
+      }
+      
+      current_waypoint++; 
+    }  
     
-    if (rclcpp::ok() ) correct_yaw(goal->poses.back());      
-    if (rclcpp::ok() ) stop_movement();
-
-    // Check if goal is done
-    if (rclcpp::ok()) {
-      // no feedback to record.  The feedback is an empty vector
+    if (rclcpp::ok() ) { 
+      if (last_reached_waypoint == ( goal->poses.size() - 1) ) {
+        // Mission complete.  Turn the drone to the pose offered by the final waypoint
+        correct_yaw(goal->poses.back());
+      } else {
+        //  Missed some goals, hence the route failed. (Could not find a clear path to next waypoint)
+        for(size_t i = last_reached_waypoint + 1; i < goal->poses.size(); i++) {        
+          result->missed_waypoints.push_back(i);
+        }
+      }
+                 
+      stop_movement();
+      
       goal_handle->succeed(result);
-      RCLCPP_INFO(this->get_logger(), "Goal succeeded");
     }
     
     server_mutex.unlock();
-    RCLCPP_INFO(this->get_logger(), "MISSION COMPLETE");
+    RCLCPP_DEBUG(this->get_logger(), "ACTION EXECUTION COMPLETE");
   }
+
+  bool isInCollision(std::shared_ptr<ufo::map::OccupancyMap> map, 
+                   ufo::geometry::BoundingVar const& bounding_volume, 
+                   bool occupied_space = true, bool free_space = false,
+                   bool unknown_space = false, ufo::map::DepthType min_depth = 0)
+  {
+    // Iterate through all leaf nodes that intersects the bounding volume
+    for (auto it = map->beginLeaves(bounding_volume, occupied_space, 
+                                   free_space, unknown_space, false, min_depth), 
+        it_end = map->endLeaves(); it != it_end; ++it) {
+      // Is in collision since a leaf node intersects the bounding volume.
+      return true;
+    }
+    // No leaf node intersects the bounding volume.
+    return false;
+  }
+  
+  bool isPathClear(const float x, const float y, const float z)
+  {
+  
+    double cx, cy, cz, cw;
+    read_position(&cx, &cy, &cz, &cw);  // From tf2
+    
+    RCLCPP_INFO(this->get_logger(), "Drone at %.2f,%.2f,%.2f requested to move to %.2f,%.2f,%.2f ", cx, cy, cz, x, y, z);
+    
+    // The robot's current position
+    ufo::math::Vector3 position(cx, cy, cz);
+
+    // The goal, where the robot wants to move
+    ufo::math::Vector3 goal( (int)x, (int)y, (int)z );
+
+    // The robot's size (radius)
+    double radius = drone_diameter_/2;
+
+    // Check if it is possible to move between the robot's current position and goal
+
+    // The direction from position to goal
+    ufo::math::Vector3 direction = goal - position;
+    // The center between position and goal
+    ufo::math::Vector3 center = position + (direction / 2.0);
+    // The distance between position and goal
+    double distance = direction.norm();
+    // Normalize direction
+    direction /= distance;
+
+    // Calculate yaw, pitch and roll for oriented bounding box
+    double yaw = -atan2(direction[1], direction[0]);
+    double pitch = -asin(direction[2]);
+    double roll = 0;  // TODO: Fix
+  
+    // Create an oriented bounding box between position and goal, with a size radius.
+    ufo::geometry::OBB obb(center, ufo::math::Vector3(distance / 2.0, radius, radius),
+		  	     ufo::math::Quaternion(roll, pitch, yaw));
+
+    // Check if the oriented bounding box collides with either occupied or unknown space,
+    // at depth 3 (16 cm)
+    if (isInCollision(map_, obb, true, false, false, 3)) {
+      return false;
+      //std::cout << "The path between position and goal is not clear" << std::endl;
+    } else {
+      //std::cout << "It is possible to move between position and goal in a straight line" << std::endl;
+    }
+    
+    return true;  
+  }
+  
+  bool read_position(double *x, double *y, double *z, double *w)
+  {
+    std::string from_frame = "base_link_ned"; //map_frame_.c_str();
+    std::string to_frame = "map";
+    
+    geometry_msgs::msg::TransformStamped transformStamped;
+    
+    // Look up for the transformation between map and base_link frames
+    // and save the last position in the 'map' frame
+    try {
+      transformStamped = tf_buffer_->lookupTransform(
+        to_frame, from_frame,
+        tf2::TimePointZero);
+        *x = transformStamped.transform.translation.x;
+        *y = transformStamped.transform.translation.y;
+        *z = transformStamped.transform.translation.z;
+    } catch (tf2::TransformException & ex) {
+      RCLCPP_DEBUG(
+        this->get_logger(), "Could not transform %s to %s: %s",
+        to_frame.c_str(), from_frame.c_str(), ex.what());
+      return false;  
+    }
+    
+    // Orientation quaternion
+    tf2::Quaternion q(
+        transformStamped.transform.rotation.x,
+        transformStamped.transform.rotation.y,
+        transformStamped.transform.rotation.z,
+        transformStamped.transform.rotation.w);
+
+    // 3x3 Rotation matrix from quaternion
+    tf2::Matrix3x3 m(q);
+
+    // Roll Pitch and Yaw from rotation matrix
+    double roll, pitch; 
+    m.getRPY(roll, pitch, *w);
    
+
+    return true;
+  }
   
 };  // class ControllerServer
 
