@@ -219,39 +219,38 @@ private:
       dsl->setStart(x, y, z);
       RCLCPP_INFO(this->get_logger(), "Planning a path from %.2f, %.2f, %.2f", x, y, z);
     }
-
-    /*
+   
     dsl->setGoal((int)goal->goal.pose.position.x, (int)goal->goal.pose.position.y, (int)goal->goal.pose.position.z);    
     dsl->initialize();   
     dsl->computeShortestPath();
     
-    int steps = dsl->extractPath(result->path.poses); 
-    RCLCPP_INFO(this->get_logger(), "Result path is %i steps long.", result->path.poses.size());
-    if (steps > 0) {
+    dsl->extractPath(result->path.poses); 
+    if (result->path.poses.size() > 0) {
       // Overwrite the pose on the goal step
       result->path.poses.back().pose.orientation.x = goal->goal.pose.orientation.x;
       result->path.poses.back().pose.orientation.y = goal->goal.pose.orientation.y;
       result->path.poses.back().pose.orientation.z = goal->goal.pose.orientation.z;
       result->path.poses.back().pose.orientation.w = goal->goal.pose.orientation.w; 
-    }
-    */
-    
-    
-    geometry_msgs::msg::PoseStamped pose;
-    // pose.header.stamp = this->now();
-    pose.header.frame_id = "map"; 
-    pose.pose.position.x = goal->goal.pose.position.x;
-    pose.pose.position.y = goal->goal.pose.position.y;
-    pose.pose.position.z = goal->goal.pose.position.z;
+    }; 
+      
+    /*
+      // An alternative to avoid path planning. Just return the goal. 
+      geometry_msgs::msg::PoseStamped pose;
+
+      // pose.header.stamp = this->now();
+      pose.header.frame_id = "map"; 
+      pose.pose.position.x = goal->goal.pose.position.x;
+      pose.pose.position.y = goal->goal.pose.position.y;
+      pose.pose.position.z = goal->goal.pose.position.z;
   
-    pose.pose.orientation.x = goal->goal.pose.orientation.x;
-    pose.pose.orientation.y = goal->goal.pose.orientation.y; 
-    pose.pose.orientation.z = goal->goal.pose.orientation.z; 
-    pose.pose.orientation.w = goal->goal.pose.orientation.w;   
+      pose.pose.orientation.x = goal->goal.pose.orientation.x;
+      pose.pose.orientation.y = goal->goal.pose.orientation.y; 
+      pose.pose.orientation.z = goal->goal.pose.orientation.z; 
+      pose.pose.orientation.w = goal->goal.pose.orientation.w;   
     
-    result->path.poses.push_back(pose);
-     
-    
+      result->path.poses.push_back(pose);     
+   */
+       
     // Check if goal is done
     if (rclcpp::ok()) {
       result->planning_time = this->now() - start_time;

@@ -20,6 +20,11 @@
  * Thank you to Howie Choset http://www.cs.cmu.edu/~choset for publishing his 
  * presentation and the explination slides by Ayorkor Mills-Tettey
  * https://www.cs.cmu.edu/~motionplanning/lecture/AppH-astar-dstar_howie.pdf
+ *
+ * NOTE: The occupancy map is a set size, with origin at 0,0,0 and all dimensions
+ * in the positive.  In the true world the drone can fly to (-1, -1, 1).  To
+ * accomodate this the half dimention of the occupancy map is added to all
+ * coordinates entering this algorithm and subtracted before passing back.
  * ***********************************************************************/
  
 #include "navigation_lite/d_star_lite.h"
@@ -31,19 +36,19 @@ bool compareNodes(shared_ptr<Node> n1, shared_ptr<Node> n2)
 }
 
 // Public Methods ///////////////////////////////////////////////////////////////////////////////////////////////////
-void DStarLite::setGoal(int x, int y, int z) {
-  goal.at(0) = x;
-  goal.at(1) = y;
-  goal.at(2) = z;
+void DStarLite::setGoal(float x, float y, float z) {
+  goal.at(0) = (int)(x + ((float)dim_x / 2.0));  // See NOTE in header comments
+  goal.at(1) = (int)(y + ((float)dim_y / 2.0));
+  goal.at(2) = (int)z;
 }
 
-void DStarLite::setStart(int x, int y, int z) {
-  start.at(0) = x;
-  start.at(1) = y;
-  start.at(2) = z;
+void DStarLite::setStart(float x, float y, float z) {
+  start.at(0) = (int)(x + ((float)dim_x / 2.0));  // See NOTE in header comments
+  start.at(1) = (int)(y + ((float)dim_y / 2.0));
+  start.at(2) = (int)z;
 }
 
-void DStarLite::setTestFunction( function<bool(int, int, int)> func )
+void DStarLite::setTestFunction( function<bool(float, float, float)> func )
 {
   testFunction = func;
 }
@@ -97,10 +102,11 @@ int DStarLite::computeShortestPath() {
   return count;
 }
 
-void DStarLite::replan(int point_x, int point_y, int point_z) {
+void DStarLite::replan(float point_x, float point_y, float point_z) {
 
   shared_ptr<Node> node;
-  node = cost_map(start.at(point_x), start.at(point_y), start.at(point_z));
+  node = cost_map(
+     start.at((int) (point_x + ((float)dim_x / 2))), start.at((int) (point_y + ((float)dim_y / 2))), start.at((int)point_z)); // See NOTE in header comments
   
   if( node == NULL) return;
   
@@ -123,9 +129,7 @@ void DStarLite::replan(int point_x, int point_y, int point_z) {
 
   // Next, consider the incoming edges of node
   array<int, 3> point;
-  point.at(0) = point_x;
-  point.at(1) = point_y;
-  point.at(2) = point_z;
+  node->getPoint(point);
   
   for(auto z = -1; z <= 1; z++) {
     if ((point.at(2)+z < 0) || (point.at(2)+z >= (int)dim_z)) continue;  // Map only functions for dim_z >= z >=0
@@ -166,16 +170,14 @@ int DStarLite::extractPath(vector<geometry_msgs::msg::PoseStamped> &waypoints) {
   array<int, 3> point;
   bool found = false;
   int count = 0;
-  do {
-    
+  do {    
     node->getPoint(point);    
-    // cout << "Path at (" << point.at(0) << " , " << point.at(1) << " , " << point.at(2) << ")" << endl;    
-
+    
     geometry_msgs::msg::PoseStamped pose;
     // pose.header.stamp = this->now();
     pose.header.frame_id = "map"; 
-    pose.pose.position.x = point.at(0);
-    pose.pose.position.y = point.at(1);
+    pose.pose.position.x = point.at(0) - ((double)dim_x / 2);  // See NOTE in header comments
+    pose.pose.position.y = point.at(1) - ((double)dim_y / 2);
     pose.pose.position.z = point.at(2);
   
     // Orientation is irrelevant, as the controller server will turn the drone as required.
@@ -217,7 +219,7 @@ void DStarLite::clearCostmap() {
 
 // Private Methods /////////////////////////////////////////////////////////////////////////////////////////////////////////
 bool DStarLite::isOccupied(int x, int y, int z) {
-  return testFunction(x,y,z);
+  return testFunction( (float)x - ((float)dim_x/2.0) , (float)y -((float)dim_y/2.0), (float)z);  // See NOTE in header comments
 }
 
 void DStarLite::expand(shared_ptr<Node> node) {

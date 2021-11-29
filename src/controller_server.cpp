@@ -508,7 +508,7 @@ private:
     double cx, cy, cz, cw;
     read_position(&cx, &cy, &cz, &cw);  // From tf2
     
-    RCLCPP_INFO(this->get_logger(), "Drone at %.2f,%.2f,%.2f requested to move to %.2f,%.2f,%.2f ", cx, cy, cz, x, y, z);
+    RCLCPP_DEBUG(this->get_logger(), "Drone at %.2f,%.2f,%.2f requested to move to %.2f,%.2f,%.2f ", cx, cy, cz, x, y, z);
     
     // The robot's current position
     ufo::math::Vector3 position(cx, cy, cz);
