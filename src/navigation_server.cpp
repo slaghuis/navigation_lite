@@ -70,16 +70,16 @@ public:
   {
     using namespace std::placeholders;
     
+    // Read parameters
+    this->declare_parameter<std::string>("map_frame", "map");
+    this->get_parameter("map_frame", map_frame_);
+    
+    
     // Create a transform listener
     tf_buffer_ =
       std::make_unique<tf2_ros::Buffer>(this->get_clock());
     transform_listener_ =
       std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-
-    // Call on_timer function every half a second (Is this enough to ensure smooth motion)?
-    timer_ = this->create_wall_timer(
-      500ms, std::bind(&NavigationServer::on_timer, this));
-    // RCLCPP_INFO(this->get_logger(), "Transform Listener [odom->base_link] started");
 
     this->action_server_ = rclcpp_action::create_server<NavigateToPose>(
       this,
@@ -91,12 +91,11 @@ public:
   }
   
 private:
-  rclcpp::TimerBase::SharedPtr timer_{nullptr};
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
-  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;  
+  std::string map_frame_;
 
   // Last (transformed) pose of the drone
-  std::shared_ptr<geometry_msgs::msg::Pose> last_pose = std::make_shared<geometry_msgs::msg::Pose>();
   rclcpp_action::Server<NavigateToPose>::SharedPtr action_server_;
   
 
@@ -104,8 +103,8 @@ private:
     const rclcpp_action::GoalUUID & uuid,
     std::shared_ptr<const NavigateToPose::Goal> goal)
   {
-    RCLCPP_INFO(this->get_logger(), "Received request with behaviour tree %s",goal->behavior_tree.c_str());
-    RCLCPP_INFO(this->get_logger(), "Received goal request to fly to [%.2f; %.2f; %.2f]", goal->pose.pose.position.x, goal->pose.pose.position.y, goal->pose.pose.position.z);
+    RCLCPP_DEBUG(this->get_logger(), "Received request with behaviour tree %s",goal->behavior_tree.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Received goal request to fly to [%.2f; %.2f; %.2f]", goal->pose.pose.position.x, goal->pose.pose.position.y, goal->pose.pose.position.z);
     (void)uuid;
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
   }
@@ -128,7 +127,6 @@ private:
   
   void execute(const std::shared_ptr<GoalHandleNavigateToPose> goal_handle)
   {
-    RCLCPP_INFO(this->get_logger(), "Executing goal");
     rclcpp::Rate loop_rate(1);
     const auto goal = goal_handle->get_goal();
     const auto wp = goal->pose;
@@ -175,8 +173,7 @@ private:
     factory.registerNodeType<NavLiteComputePathToPoseAction>("ComputePathToPose");
 
     tree = factory.createTreeFromFile(goal->behavior_tree);
-    //    tree = factory.createTreeFromFile("/home/eric/ros_ws/navigate.xml");
-    RCLCPP_INFO(this->get_logger(), "Tree Loaded");
+    RCLCPP_DEBUG(this->get_logger(), "Tree Loaded");
     
     // Initialise the BT Nodes
     auto node_ptr = shared_from_this();                
@@ -215,25 +212,17 @@ private:
       }
       
       // Publish Feedback
-      current_pose.pose.position.x = last_pose->position.x;        // geometry_msgs/PoseStamped current_pose
-      current_pose.pose.position.y = last_pose->position.y;
-      current_pose.pose.position.z = last_pose->position.z;
-      
-      current_pose.pose.orientation.x = last_pose->orientation.x;
-      current_pose.pose.orientation.y = last_pose->orientation.y;
-      current_pose.pose.orientation.z = last_pose->orientation.z;
-      current_pose.pose.orientation.w = last_pose->orientation.w;
+      read_position(current_pose);
       
       navigation_time = now() - start_time;                         // builtin_interfaces/Duration navigation_time
       estimated_time_remaining.sec = 0;                             // builtin_interfaces/Duration estimated_time_remaining 
       estimated_time_remaining.nanosec = 0;
       number_of_recoveries = 0;                                     // int16 number_of_recoveries
       
-      auto err_x = wp.pose.position.x - last_pose->position.x; 
-      auto err_y = wp.pose.position.y - last_pose->position.y; 
-      auto xy_distance = sqrt(pow(err_x,2) + pow(err_y,2));
-      auto err_z = wp.pose.position.y - last_pose->position.z; 
-      distance_remaining = sqrt(pow(err_z,2) + pow(xy_distance,2)); // float32 distance_remaining
+      auto err_x = wp.pose.position.x - current_pose.pose.position.x; 
+      auto err_y = wp.pose.position.y - current_pose.pose.position.y; 
+      auto err_z = wp.pose.position.y - current_pose.pose.position.z; 
+      distance_remaining = sqrt(pow(err_z,2) + pow(err_x,2) + pow(err_y,2)); // float32 distance_remaining
       
       goal_handle->publish_feedback(feedback);
       
@@ -247,41 +236,40 @@ private:
       RCLCPP_INFO(this->get_logger(), "Goal succeeded");
     }
   }
-  
+   
   // Transformation Listener/////////////////////////////////////////////////////
-  void on_timer()
-  {
-    // Store frame names in variables that will be used to
-    // compute transformations
-
-    std::string source_frameid = "odom";          // Navigate in the map frame.  Depends on a proper tf tree
-    std::string target_frameid = "base_link";
-
+  bool read_position( geometry_msgs::msg::PoseStamped current_pose )
+  {  
+    std::string from_frame = "base_link_ned"; 
+    std::string to_frame = map_frame_.c_str();
+      
     geometry_msgs::msg::TransformStamped transformStamped;
-
-    // Look up for the transformation between odom and base_link frames
-    // and save the last position
+    
+    // Look up for the transformation between map and base_link_ned frames
+    // and save the last position in the 'map' frame
     try {
       transformStamped = tf_buffer_->lookupTransform(
-        target_frameid, source_frameid,
+        to_frame, from_frame,
         tf2::TimePointZero);
+      current_pose.pose.position.x = transformStamped.transform.translation.x;
+      current_pose.pose.position.y = transformStamped.transform.translation.y;
+      current_pose.pose.position.z = transformStamped.transform.translation.z;
+      
+      current_pose.pose.orientation.x = transformStamped.transform.rotation.x;
+      current_pose.pose.orientation.y = transformStamped.transform.rotation.y;
+      current_pose.pose.orientation.z = transformStamped.transform.rotation.z;
+      current_pose.pose.orientation.w = transformStamped.transform.rotation.w;
+      
     } catch (tf2::TransformException & ex) {
       RCLCPP_DEBUG(
         this->get_logger(), "Could not transform %s to %s: %s",
-        target_frameid.c_str(), source_frameid.c_str(), ex.what());
-      return;
+        to_frame.c_str(), from_frame.c_str(), ex.what());
+      return false;  
     }
-
-    last_pose->position.x = transformStamped.transform.translation.x;  // Foreward of origin
-    last_pose->position.y = transformStamped.transform.translation.y;  // Left of origin
-    last_pose->position.z = transformStamped.transform.translation.z;  // Above origin
-    
-    last_pose->orientation.x = transformStamped.transform.rotation.x;  // Quaterion
-    last_pose->orientation.y = transformStamped.transform.rotation.y;
-    last_pose->orientation.z = transformStamped.transform.rotation.z;
-    last_pose->orientation.w = transformStamped.transform.rotation.w;
-    
+    return true;
   }
+  
+  
 };  // class NavigationServer
 
 }  // namespace navigation_lite
