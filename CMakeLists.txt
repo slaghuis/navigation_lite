@@ -65,14 +65,14 @@ ament_target_dependencies(navigation_action_server
 rclcpp_components_register_node(navigation_action_server PLUGIN "navigation_lite::NavigationServer" EXECUTABLE navigation_server)
 
 add_library(controller_action_server SHARED
-  src/controller_server.cpp)
+  src/controller_server.cpp
+  src/conversions.cpp)
 target_include_directories(controller_action_server PRIVATE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_compile_definitions(controller_action_server
   PRIVATE "NAVIGATION_LITE_BUILDING_DLL")
 ament_target_dependencies(controller_action_server
-  "navigation_interfaces"
   "rclcpp"
   "rclcpp_action"
   "rclcpp_components"
@@ -84,9 +84,39 @@ ament_target_dependencies(controller_action_server
   "tf2_ros" 
   "tf2_msgs"
   "tf2_geometry_msgs"
+  "navigation_interfaces"
   "drone_interfaces")
+target_link_libraries(controller_action_server
+    UFO::Map
+)
 rclcpp_components_register_node(controller_action_server PLUGIN "navigation_lite::ControllerServer" EXECUTABLE controller_server)
 
+add_library(planner_action_server SHARED
+  src/planner_server.cpp
+  src/conversions.cpp
+  src/d_star_lite.cpp)
+target_include_directories(planner_action_server PRIVATE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_definitions(planner_action_server
+  PRIVATE "NAVIGATION_LITE_BUILDING_DLL")
+ament_target_dependencies(planner_action_server
+  "rclcpp"
+  "rclcpp_action"
+  "rclcpp_components"
+  "std_msgs"
+  "geometry_msgs"
+  "nav_msgs"
+  "builtin_interfaces"
+  "tf2"
+  "tf2_ros"
+  "tf2_msgs"
+  "tf2_geometry_msgs" 
+  "navigation_interfaces")
+target_link_libraries(planner_action_server
+    UFO::Map
+)   
+rclcpp_components_register_node(planner_action_server PLUGIN "navigation_lite::PlannerServer" EXECUTABLE planner_server)
 
 add_library(recovery_action_server SHARED
   src/recovery_server.cpp)
@@ -109,37 +139,8 @@ ament_target_dependencies(recovery_action_server
   "tf2_msgs"
   "tf2_geometry_msgs"
   "drone_interfaces")
+ 
 rclcpp_components_register_node(recovery_action_server PLUGIN "navigation_lite::RecoveryServer" EXECUTABLE recovery_server)
-
-
-add_library(planner_action_server SHARED
-  src/planner_server.cpp
-  src/conversions.cpp
-  src/d_star_lite.cpp)
-target_include_directories(planner_action_server PRIVATE
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
-target_compile_definitions(planner_action_server
-  PRIVATE "NAVIGATION_LITE_BUILDING_DLL")
-ament_target_dependencies(planner_action_server
-  "rclcpp"
-  "rclcpp_action"
-  "rclcpp_components"
-  "std_msgs"
-  "sensor_msgs"
-  "geometry_msgs"
-  "nav_msgs"
-  "builtin_interfaces"
-  "tf2"
-  "tf2_ros"
-  "tf2_msgs"
-  "tf2_geometry_msgs" 
-  "navigation_interfaces")
-target_link_libraries(planner_action_server
-    UFO::Map
-)   
-
-rclcpp_components_register_node(planner_action_server PLUGIN "navigation_lite::PlannerServer" EXECUTABLE planner_server)
 
 add_library(map_publish_server SHARED
   src/map_server.cpp
