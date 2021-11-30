@@ -22,7 +22,6 @@
  * Listens to tf2 map->base_link to find starting position for path planning.
  * All calculations done in the map frame
  * ***********************************************************************/
-
 #include <functional>
 #include <memory>
 #include <chrono>
@@ -78,12 +77,12 @@ public:
     subscription_ = this->create_subscription<navigation_interfaces::msg::UfoMapStamped>(
       "nav_lite/map", 10, std::bind(&PlannerServer::topic_callback, this, _1));
       
-    this->action_server_ = rclcpp_action::create_server<ComputePathToPose>(
+    this->planning_action_server_ = rclcpp_action::create_server<ComputePathToPose>(
       this,
       "nav_lite/compute_path_to_pose",
-      std::bind(&PlannerServer::handle_goal, this, _1, _2),
-      std::bind(&PlannerServer::handle_cancel, this, _1),
-      std::bind(&PlannerServer::handle_accepted, this, _1));
+      std::bind(&PlannerServer::handle_plan_goal, this, _1, _2),
+      std::bind(&PlannerServer::handle_plan_cancel, this, _1),
+      std::bind(&PlannerServer::handle_plan_accepted, this, _1));
       
     // Build a UFO map
     double resolution = 0.25;   
@@ -113,7 +112,7 @@ public:
   }
 
 private:
-  rclcpp_action::Server<ComputePathToPose>::SharedPtr action_server_;
+  rclcpp_action::Server<ComputePathToPose>::SharedPtr planning_action_server_;
   std::shared_ptr<ufo::map::OccupancyMap> map_;
   std::string map_frame_;
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
@@ -130,7 +129,7 @@ private:
     geometry_msgs::msg::TransformStamped transformStamped;
     
     // Look up for the transformation between map and base_link_ned frames
-    // and save the last position in the 'map' frame
+    // and returns the last position in the 'map' frame
     try {
       transformStamped = tf_buffer_->lookupTransform(
         to_frame, from_frame,
@@ -161,28 +160,26 @@ private:
   
   // PLANNER ACTION SERVER ///////////////////////////////////////////////////////////////////////////////////////////
 
-  rclcpp_action::GoalResponse handle_goal(
+  rclcpp_action::GoalResponse handle_plan_goal(
     const rclcpp_action::GoalUUID & uuid,
     std::shared_ptr<const ComputePathToPose::Goal> goal)
   {
     RCLCPP_DEBUG(this->get_logger(), "Received goal request for path to [%.2f;%.2f;%.2f]", goal->goal.pose.position.x, goal->goal.pose.position.y, goal->goal.pose.position.z);
     (void)uuid;
     
-    /*
-    if ( ((goal->goal.pose.position.x <0) || (goal->goal.pose.position.x > e_size_)) ||
-         ((goal->goal.pose.position.y <0) || (goal->goal.pose.position.y > n_size_)) ||
-         ((goal->goal.pose.position.z <0) || (goal->goal.pose.position.z > u_size_)) ) {
+    if ( ((goal->goal.pose.position.x < (-e_size_ / 2)) || (goal->goal.pose.position.x > (e_size_ / 2))) ||
+         ((goal->goal.pose.position.y < (-n_size_ / 2)) || (goal->goal.pose.position.y > (n_size_ / 2))) ||
+         ((goal->goal.pose.position.z < 0) || (goal->goal.pose.position.z > u_size_)) ) {
       RCLCPP_ERROR(this->get_logger(), "Goal of [%.2f;%.2f;%.2f] is outside map range. [%i;%i;%i]", 
         goal->goal.pose.position.x, goal->goal.pose.position.y, goal->goal.pose.position.z,
         e_size_, n_size_, u_size_);
       return rclcpp_action::GoalResponse::REJECT;
     }     
-    */
     
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
   }
 
-  rclcpp_action::CancelResponse handle_cancel(
+  rclcpp_action::CancelResponse handle_plan_cancel(
     const std::shared_ptr<GoalHandleComputePathToPose> goal_handle)
   {
     RCLCPP_INFO(this->get_logger(), "Received request to cancel goal");
@@ -190,13 +187,13 @@ private:
     return rclcpp_action::CancelResponse::ACCEPT;
   }
 
-  void handle_accepted(const std::shared_ptr<GoalHandleComputePathToPose> goal_handle)
+  void handle_plan_accepted(const std::shared_ptr<GoalHandleComputePathToPose> goal_handle)
   {
     // this needs to return quickly to avoid blocking the executor, so spin up a new thread
-    std::thread{std::bind(&PlannerServer::execute, this, _1), goal_handle}.detach();
+    std::thread{std::bind(&PlannerServer::execute_plan, this, _1), goal_handle}.detach();
   }
 
-  void execute(const std::shared_ptr<GoalHandleComputePathToPose> goal_handle)
+  void execute_plan(const std::shared_ptr<GoalHandleComputePathToPose> goal_handle)
   {
     RCLCPP_DEBUG(this->get_logger(), "Executing goal");
     rclcpp::Rate loop_rate(1);
@@ -258,7 +255,9 @@ private:
       RCLCPP_DEBUG(this->get_logger(), "Goal succeeded");
     }
   }
-  
+
+  // MAPPING UTILITY FUNCTIONS //////////////////////////////////////////////////////////////////////
+
   bool isOccupied(const float x, float y, float z)
   {
     // Would it be better to see if the robot can travel between current position (tf_listener)
