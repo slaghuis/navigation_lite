@@ -67,6 +67,7 @@
 #include "navigation_lite/conversions.h"
 
 static const float DEFAULT_MAX_SPEED_XY = 2.0;          // Maximum horizontal speed, in m/s
+static const float DEFAULT_MAX_ACCEL_XY = 0.2;          // Maximum horizontal acceleration, in m/s/s
 static const float DEFAULT_MAX_SPEED_Z = 0.33;          // Maximum vertical speed, in m/s
 static const float DEFAULT_MAX_YAW_SPEED = 0.5;         // Maximum yaw speed in radians/s 
 static const float DEFAULT_WAYPOINT_RADIUS_ERROR = 0.3; // Acceptable XY distance to waypoint deemed as close enough
@@ -107,6 +108,7 @@ private:
   // Node Parameters
   float max_yaw_speed_;
   float max_speed_xy_;
+  float max_accel_xy_;
   float max_speed_z_;
   float waypoint_radius_error_;
   float yaw_threshold_;
@@ -147,6 +149,7 @@ private:
     freq_ = this->declare_parameter("frequency", 10.0);     // Control frequency in Hz.  Must be bigger than 2 Hz
     
     max_speed_xy_ = this->declare_parameter<float>("max_speed_xy", DEFAULT_MAX_SPEED_XY);
+    max_accel_xy_ = this->declare_parameter<float>("max_accel_xy", DEFAULT_MAX_ACCEL_XY);
     max_speed_z_= this->declare_parameter<float>("max_speed_z", DEFAULT_MAX_SPEED_Z);
     max_yaw_speed_ = this->declare_parameter<float>("max_yaw_speed", DEFAULT_MAX_YAW_SPEED);
   
@@ -276,6 +279,8 @@ private:
     pid_x->restart_control();
     pid_y->restart_control();
     pid_z->restart_control();
+    double last_v_x = 0.0;
+    double last_v_y = 0.0;
     do {
       read_position(&x, &y, &z, &w);  // Current position according to tf2
 
@@ -309,6 +314,22 @@ private:
         }
         setpoint.linear.y = 0.0;
       }
+      
+      // Govern acceleration, not decellaration.  The latter is governed by a well tuned PID
+      // but then not all control is done via a PID.  Often velocity is forced to 0 which is 
+      // an abrupt stop. To be improved.
+      if (setpoint.linear.x > last_v_x ) {
+        setpoint.linear.x = min(setpoint.linear.x, last_v_x + (max_accel_xy_ / freq_));
+      } else {
+        setpoint.linear.x = max(setpoint.linear.x, last_v_x - (max_accel_xy_ / freq_));
+      }
+      if (setpoint.linear.y > last_v_y ) {
+        setpoint.linear.y = min(setpoint.linear.y, last_v_y + (max_accel_xy_ / freq_));
+      } else {
+        setpoint.linear.y = max(setpoint.linear.y, last_v_y - (max_accel_xy_ / freq_));
+      }
+      last_v_x = setpoint.linear.x;
+      last_v_y = setpoint.linear.y;
       
       publisher_->publish(setpoint);
       loop_rate.sleep();  // Give the drone time to move
