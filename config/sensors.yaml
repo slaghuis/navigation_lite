@@ -31,7 +31,7 @@ map_server:
             frame: base_down
             posX: 0.01
             posY: -0.06
-            posZ: -0.055
+            posZ: -0.05
             roll: 0.0
             pitch: deg(270)  # straight down
             yaw: 0.0

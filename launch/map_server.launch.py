@@ -10,7 +10,7 @@ def generate_launch_description():
         'sensors.yaml'
         )
         
-    node = Node(
+    node=Node(
         package = 'navigation_lite',
         name = 'map_server',
         executable = 'map_server',
@@ -18,7 +18,5 @@ def generate_launch_description():
         emulate_tty=True,
         parameters = [config]
     )
-    
     ld.add_action(node)
-    
     return ld

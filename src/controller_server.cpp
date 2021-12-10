@@ -112,6 +112,8 @@ private:
   float yaw_threshold_;
   float altitude_threshold_;
   int holddown_;
+  double freq_;
+  double yaw_control_limit_;
   
   // Clock
   rclcpp::Clock steady_clock_{RCL_STEADY_TIME};
@@ -124,6 +126,7 @@ private:
   
   // PID Controllers  
   std::shared_ptr<PID> pid_x;
+  std::shared_ptr<PID> pid_y;
   std::shared_ptr<PID> pid_z;
   std::shared_ptr<PID> pid_yaw;
   
@@ -140,38 +143,40 @@ private:
     // Only run this once.  Stop the timer that triggered this.
     this->one_off_timer_->cancel();
        
-    // Declare node parameters    
-    this->declare_parameter<float>("max_speed_xy", DEFAULT_MAX_SPEED_XY);
-    this->declare_parameter<float>("max_speed_z", DEFAULT_MAX_SPEED_Z);
-    this->declare_parameter<float>("max_yaw_speed", DEFAULT_MAX_YAW_SPEED);
-    this->declare_parameter("pid_xy", std::vector<double>{0.7, 0.0, 0.0});
-    this->declare_parameter("pid_z", std::vector<double>{0.7, 0.0, 0.0});
-    this->declare_parameter("pid_yaw", std::vector<double>{0.7, 0.0, 0.0});    
-    this->declare_parameter<float>("waypoint_radius_error", DEFAULT_WAYPOINT_RADIUS_ERROR);
-    this->declare_parameter<float>("yaw_threshold", DEFAULT_YAW_THRESHOLD);
-    this->declare_parameter<float>("altitude_threshold", DEFAULT_ALTITUDE_THRESHOLD);
-    this->declare_parameter<int>("holddown", DEFAULT_HOLDDOWN);
-
-    // Read the parameters
-    this->get_parameter("max_yaw_speed", max_yaw_speed_);
-    this->get_parameter("max_speed_xy", max_speed_xy_);
-    this->get_parameter("max_speed_z", max_speed_z_);
-    this->get_parameter("waypoint_radius_error", waypoint_radius_error_);
-    this->get_parameter("yaw_threshold", yaw_threshold_);
-    this->get_parameter("altitude_threshold", altitude_threshold_);
-    this->get_parameter("holddown", holddown_); 
+    // Declare and get parameters    
+    freq_ = this->declare_parameter("frequency", 10.0);     // Control frequency in Hz.  Must be bigger than 2 Hz
     
+    max_speed_xy_ = this->declare_parameter<float>("max_speed_xy", DEFAULT_MAX_SPEED_XY);
+    max_speed_z_= this->declare_parameter<float>("max_speed_z", DEFAULT_MAX_SPEED_Z);
+    max_yaw_speed_ = this->declare_parameter<float>("max_yaw_speed", DEFAULT_MAX_YAW_SPEED);
+  
+    waypoint_radius_error_ = this->declare_parameter<float>("waypoint_radius_error", DEFAULT_WAYPOINT_RADIUS_ERROR);
+    yaw_threshold_ = this->declare_parameter<float>("yaw_threshold", DEFAULT_YAW_THRESHOLD);
+    altitude_threshold_ = this->declare_parameter<float>("altitude_threshold", DEFAULT_ALTITUDE_THRESHOLD);
+    holddown_ = this->declare_parameter<int>("holddown", DEFAULT_HOLDDOWN);
+    
+    map_frame_ = this->declare_parameter<std::string>("map_frame", "map");
+    drone_diameter_ = this->declare_parameter<double>("drone_diameter", 0.80);   // 800 mm for my current craft.   
+    
+    // The grid size of the map is still hard coded, thus this is treated as a constant
+    yaw_control_limit_ = 1.0;   // Distance from waypoint where control moves to X and Y PID rather than Yaw and X 
+        
+    // Read the other parameters
+    this->declare_parameter("pid_xy", std::vector<double>{0.7, 0.0, 0.0});
     rclcpp::Parameter pid_xy_settings_param = this->get_parameter("pid_xy");
     std::vector<double> pid_xy_settings = pid_xy_settings_param.as_double_array(); 
-    pid_x   = std::make_shared<PID>(0.5, max_speed_xy_, -max_speed_xy_, (float)pid_xy_settings[0], (float)pid_xy_settings[1], (float)pid_xy_settings[2]);
+    pid_x   = std::make_shared<PID>(1.0 / freq_ , max_speed_xy_, -max_speed_xy_, (float)pid_xy_settings[0], (float)pid_xy_settings[1], (float)pid_xy_settings[2]);
+    pid_y   = std::make_shared<PID>(1.0 / freq_ , max_speed_xy_, -max_speed_xy_, (float)pid_xy_settings[0], (float)pid_xy_settings[1], (float)pid_xy_settings[2]);
 
+    this->declare_parameter("pid_z", std::vector<double>{0.7, 0.0, 0.0});
     rclcpp::Parameter pid_z_settings_param = this->get_parameter("pid_z");
     std::vector<double> pid_z_settings = pid_z_settings_param.as_double_array(); 
-    pid_z   = std::make_shared<PID>(0.5, max_speed_z_, -max_speed_z_, (float)pid_z_settings[0], (float)pid_z_settings[1], (float)pid_z_settings[2]);
+    pid_z   = std::make_shared<PID>(1.0 / freq_, max_speed_z_, -max_speed_z_, (float)pid_z_settings[0], (float)pid_z_settings[1], (float)pid_z_settings[2]);
 
+    this->declare_parameter("pid_yaw", std::vector<double>{0.7, 0.0, 0.0});  
     rclcpp::Parameter pid_yaw_settings_param = this->get_parameter("pid_yaw");
     std::vector<double> pid_yaw_settings = pid_yaw_settings_param.as_double_array(); 
-    pid_yaw   = std::make_shared<PID>(0.5, max_yaw_speed_, -max_yaw_speed_, (float)pid_yaw_settings[0], (float)pid_yaw_settings[1], (float)pid_yaw_settings[2]);
+    pid_yaw   = std::make_shared<PID>(1.0 / freq_, max_yaw_speed_, -max_yaw_speed_, (float)pid_yaw_settings[0], (float)pid_yaw_settings[1], (float)pid_yaw_settings[2]);
 
     // Create a transform listener
     tf_buffer_ =
@@ -186,17 +191,10 @@ private:
     publisher_ =
       this->create_publisher<geometry_msgs::msg::Twist>("drone/cmd_vel", 1);
 
-    this->declare_parameter<std::string>("map_frame", "map");
-    this->get_parameter("map_frame", map_frame_);
-      
     // Build a UFO map
     double resolution = 0.25;   
-    this->declare_parameter<double>("map_resolution", 0.25);   // use resolution 0.25.  Can then query the map at 0.5 and 1.0
-    this->get_parameter("map_resolution", resolution);
+    resolution = this->declare_parameter<double>("map_resolution", 0.25);   // use resolution 0.25.  Can then query the map at 0.5 and 1.0
     map_ = std::make_shared<ufo::map::OccupancyMap>(resolution); 
-
-    this->declare_parameter<double>("drone_diameter", 0.80);   // 800 mm for my current craft.
-    this->get_parameter("drone_diameter", drone_diameter_);   
 
     subscription_ = this->create_subscription<navigation_interfaces::msg::UfoMapStamped>(
       "nav_lite/map", 10, std::bind(&ControllerServer::topic_callback, this, _1));
@@ -208,11 +206,10 @@ private:
       std::bind(&ControllerServer::handle_goal, this, _1, _2),
       std::bind(&ControllerServer::handle_cancel, this, _1),
       std::bind(&ControllerServer::handle_accepted, this, _1));
-    RCLCPP_INFO(this->get_logger(), "Action Server [nav_lite/follow_waypoints] started");
-    
+    RCLCPP_INFO(this->get_logger(), "Action Server [nav_lite/follow_waypoints] started");    
   }   
   
-// MAP SUBSCRIPTION ////////////////////////////////////////////////////////////////////////////////////////////////
+// MAP SUBSCRIPTION ///////////////////////////////////////////////////////////////////////////////////////////////
   void topic_callback(const navigation_interfaces::msg::UfoMapStamped::SharedPtr msg) const
   {
     // Convert ROS message to a UFOmap
@@ -225,10 +222,10 @@ private:
   rclcpp::Subscription<navigation_interfaces::msg::UfoMapStamped>::SharedPtr subscription_;
   
 
-// FLIGHT CONTROL /////////////////////////////////////////////////////
+// FLIGHT CONTROL ////////////////////////////////////////////////////////////////////////////////////////////////
   
   bool fly_to_waypoint(geometry_msgs::msg::PoseStamped wp) {
-    rclcpp::Rate loop_rate(2);
+    rclcpp::Rate loop_rate( freq_ );
 
     bool waypoint_is_close_, altitude_is_close_, pose_is_close_;
     float target_x_, target_y_, target_z_;
@@ -258,6 +255,10 @@ private:
 
       err_x = target_x_ - x; 
       err_y = target_y_ - y;
+      
+      if ( sqrt(pow(err_x,2) + pow(err_y,2)) < yaw_control_limit_ ) {
+        break;
+      }
       yaw_to_target = atan2(err_y, err_x);
       
       yaw_error = getDiff2Angles(yaw_to_target, w, M_PI);
@@ -273,6 +274,7 @@ private:
 
     // Now that we are ponting, keep on adjusting yaw, but include altitude and froeward velocity
     pid_x->restart_control();
+    pid_y->restart_control();
     pid_z->restart_control();
     do {
       read_position(&x, &y, &z, &w);  // Current position according to tf2
@@ -285,27 +287,34 @@ private:
       waypoint_is_close_ = (err_dist < waypoint_radius_error_);
 
       altitude_is_close_ = ( abs(err_z) < altitude_threshold_);
-    
-      yaw_to_target = atan2(err_y, err_x);      
-      yaw_error = getDiff2Angles(yaw_to_target, w, M_PI);
-      pose_is_close_ = (fabs(yaw_error) < yaw_threshold_);
+      setpoint.linear.z = pid_z->calculate(0, -err_z);                // correct altitude
       
-      if (!(waypoint_is_close_ && altitude_is_close_)) {
-        setpoint.angular.z = pid_yaw->calculate(0, -yaw_error);         // correct yaw error down to zero  
-        setpoint.linear.z = pid_z->calculate(0, -err_z);                // correct altitude
-        setpoint.linear.x = pid_x->calculate(0, -err_dist);              // fly
+      if ( sqrt(pow(err_x,2) + pow(err_y,2)) < yaw_control_limit_ ) {
+        // Control via X and Y PID rather than yaw and thrust.
+        
+        setpoint.linear.x = pid_x->calculate(0, -err_x);              // fly
+        setpoint.linear.y = pid_y->calculate(0, -err_y);
       } else {
-        // Stop motion
-        setpoint.angular.z = 0;
-        setpoint.linear.z = 0;
-        setpoint.linear.x = 0;
-      }         
+        // Control with yaw and thrust. 
+        yaw_to_target = atan2(err_y, err_x);      
+        yaw_error = getDiff2Angles(yaw_to_target, w, M_PI);
+        pose_is_close_ = (fabs(yaw_error) < yaw_threshold_);
+        
+        setpoint.angular.z = pid_yaw->calculate(0, -yaw_error);         // correct yaw error down to zero  
+        if( pose_is_close_ ) {
+          setpoint.linear.x = pid_x->calculate(0, -err_dist);              // fly
+        } else {
+          // Avoid flying in a doughnut.  First correct yaw.
+          setpoint.linear.x = 0.0;
+        }
+        setpoint.linear.y = 0.0;
+      }
+      
       publisher_->publish(setpoint);
       loop_rate.sleep();  // Give the drone time to move
     }  while (!(waypoint_is_close_ && altitude_is_close_)); 
     
     return true;
-
   }
   
   bool correct_yaw(geometry_msgs::msg::PoseStamped wp) {
@@ -510,6 +519,16 @@ private:
     
     RCLCPP_DEBUG(this->get_logger(), "Drone at %.2f,%.2f,%.2f requested to move to %.2f,%.2f,%.2f ", cx, cy, cz, x, y, z);
     
+    // Either fly horizontally, or fly vertically, but not both
+  /*  double err_x = cx - x; 
+    double err_y = cy - y;
+      
+    bool horizontal = sqrt(pow(err_x,2) + pow(err_y,2)) > waypoint_radius_error_;
+    bool vertical = fabs(cz - z) > altitude_threshold_;
+    if (vertical && horizontal) {
+      return false;
+    }
+   */ 
     // The robot's current position
     ufo::math::Vector3 position(cx, cy, cz);
 
