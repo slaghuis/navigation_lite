@@ -26,6 +26,7 @@ def generate_launch_description():
         executable = 'controller_server',
         parameters=[
             {'max_speed_xy'          : 0.7},
+            {'max_accel_xy'          : 0.2},
             {'max_speed_z'           : 0.33},
             {'max_yaw_speed'         : 0.5},
             {'waypoint_radius_error' : 0.3},

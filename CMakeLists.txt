@@ -112,7 +112,8 @@ ament_target_dependencies(planner_action_server
   "tf2_ros"
   "tf2_msgs"
   "tf2_geometry_msgs" 
-  "navigation_interfaces")
+  "navigation_interfaces"
+  "drone_interfaces")
 target_link_libraries(planner_action_server
     UFO::Map
 )   

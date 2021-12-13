@@ -315,12 +315,12 @@ private:
         setpoint.linear.y = 0.0;
       }
       
-      // Govern acceleration, not decellaration.  The latter is governed by a well tuned PID
-      // but then not all control is done via a PID.  Often velocity is forced to 0 which is 
-      // an abrupt stop. To be improved.
-      if (setpoint.linear.x > last_v_x ) {
+      // Govern acceleration, and decellaration.  The latter should be governed by a well 
+      // tuned PID but then not all control is done via a PID.  Often velocity is forced
+      // to 0 which is an abrupt stop.
+      if (setpoint.linear.x > last_v_x ) {  // Acceleration
         setpoint.linear.x = min(setpoint.linear.x, last_v_x + (max_accel_xy_ / freq_));
-      } else {
+      } else {                              // Decelleration
         setpoint.linear.x = max(setpoint.linear.x, last_v_x - (max_accel_xy_ / freq_));
       }
       if (setpoint.linear.y > last_v_y ) {
@@ -355,8 +355,7 @@ private:
     // Roll Pitch and Yaw from rotation matrix
     double roll, pitch, yaw; 
     m.getRPY(roll, pitch, yaw);
-    
-      
+         
     bool  pose_is_close_;
     
     geometry_msgs::msg::Twist setpoint = geometry_msgs::msg::Twist();
@@ -541,7 +540,8 @@ private:
     RCLCPP_DEBUG(this->get_logger(), "Drone at %.2f,%.2f,%.2f requested to move to %.2f,%.2f,%.2f ", cx, cy, cz, x, y, z);
     
     // Either fly horizontally, or fly vertically, but not both
-  /*  double err_x = cx - x; 
+    /*
+    double err_x = cx - x; 
     double err_y = cy - y;
       
     bool horizontal = sqrt(pow(err_x,2) + pow(err_y,2)) > waypoint_radius_error_;
@@ -549,7 +549,8 @@ private:
     if (vertical && horizontal) {
       return false;
     }
-   */ 
+    */
+     
     // The robot's current position
     ufo::math::Vector3 position(cx, cy, cz);
 
