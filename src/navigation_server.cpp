@@ -45,6 +45,7 @@
 #include "navigation_lite/control_round_robin_node.h"
 #include "navigation_lite/control_pipeline_sequence.h"
 #include "navigation_lite/control_recovery_node.h"
+#include "navigation_lite/decorator_rate_controller.h"
 #include "navigation_lite/action_read_goal.h"
 #include "navigation_lite/action_wait.h"
 #include "navigation_lite/action_spin.h"
@@ -165,7 +166,8 @@ private:
     
     factory.registerNodeType<RoundRobinNode>("RoundRobin"); 
     factory.registerNodeType<PipelineSequence>("PipelineSequence"); 
-    factory.registerNodeType<RecoveryNode>("RecoveryNode");    
+    factory.registerNodeType<RecoveryNode>("RecoveryNode"); 
+    factory.registerNodeType<RateController>("RateController");
     factory.registerNodeType<NavLiteReadGoalAction>("ReadGoal");  //  10,0;1,0;5,0;0.0
     factory.registerNodeType<NavLiteWaitAction>("Wait");
     factory.registerNodeType<NavLiteSpinAction>("Spin");

@@ -43,7 +43,8 @@ add_library(navigation_action_server SHARED
   src/action_read_goal.cpp
   src/control_recovery_node.cpp
   src/control_pipeline_sequence.cpp
-  src/control_round_robin_node.cpp)
+  src/control_round_robin_node.cpp
+  src/decorator_rate_controller.cpp)
 target_include_directories(navigation_action_server PRIVATE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
