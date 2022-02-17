@@ -56,9 +56,8 @@ void SensorPrecipitator::execute(double rate) {
   
   // Build a UFO map
   // 25 cm voxel size            
-  double resolution = 0.25;   
-  node_->declare_parameter<double>("map_resolution", 0.25);   // use resolution 0.25.  Can then query the map at 0.5 and 1.0
-  node_->get_parameter("map_resolution", resolution);
+  double resolution;   
+  resolution = node_->declare_parameter<double>("map_resolution", 0.25);   // use resolution 0.25.  Can then query the map at 0.5 and 1.0
                                        
   // Maximum range to integrate, in meters.
   // Set to negative value to ignore maximum range.
@@ -70,16 +69,8 @@ void SensorPrecipitator::execute(double rate) {
   ufo::map::DepthType integration_depth = 1;
   // Will free space at resolution * 2^(integration_depth) voxel size.
 
-  // Some translation [x, y, z]
-  ufo::math::Vector3 translation(0.0, 0.0, 0.0); 
-
-  // Some rotation (w, x, y, z)
-  ufo::math::Quaternion rotation(1.0, 0.0, 0.0, 0.0);
-
-  ufo::math::Pose6 frame_origin(translation, rotation);
-
-  ufo::math::Vector3 sensor_origin(translation);    
-                                       
+  geometry_msgs::msg::TransformStamped transformStamped;                                       
+  
   map = std::make_shared<ufo::map::OccupancyMap>(resolution);                                     
 
   // Point cloud
@@ -92,7 +83,7 @@ void SensorPrecipitator::execute(double rate) {
     //cloud->header.frame_id = frame_;
     //cloud->height = 1;
     cloud.clear();
-
+     
     // Convert all Sensor readings to Points
     for (std::vector<std::shared_ptr<Sensor>>::iterator sensorIt = sensors.begin(); sensorIt != sensors.end(); ++sensorIt) { 
         std::shared_ptr<Sensor> sensor = *sensorIt;
@@ -139,10 +130,39 @@ void SensorPrecipitator::execute(double rate) {
 
     }
     
+    // Read the current position of the drone, using that as the sensor origin
+    try {
+      transformStamped = tf_buffer_->lookupTransform(
+        frame_, "base_link",
+        tf2::TimePointZero);
+    } catch (tf2::TransformException & ex) {
+      RCLCPP_INFO(
+        node_->get_logger(), "Could not transform %s to base_link: %s", frame_.c_str(), ex.what());
+      return;
+    }
+  
+    // Some translation [x, y, z]
+    //ufo::math::Vector3 translation(0.0, 0.0, 0.0); 
+    ufo::math::Vector3 translation(
+      transformStamped.transform.translation.x,
+      transformStamped.transform.translation.y,
+      transformStamped.transform.translation.z);
+      
+    // Some rotation (w, x, y, z)
+    //ufo::math::Quaternion rotation(1.0, 0.0, 0.0, 0.0);
+    ufo::math::Quaternion rotation(
+      transformStamped.transform.rotation.w,
+      transformStamped.transform.rotation.x,
+      transformStamped.transform.rotation.y,
+      transformStamped.transform.rotation.z);
+
+    ufo::math::Pose6 frame_origin(translation, rotation);
+    ufo::math::Vector3 sensor_origin(translation);   
+      
     // Specify if the point cloud should be transformed in parallel or not.
     bool parallel = true;
     // Transform point cloud to correct frame
-    cloud.transform(frame_origin, parallel);
+    cloud.transform(frame_origin, parallel);    
 
     // Integrate point cloud into UFOMap
     map->insertPointCloudDiscrete(sensor_origin, cloud, max_range, integration_depth);
