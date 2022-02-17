@@ -68,8 +68,8 @@ public:
   {
     using namespace std::chrono_literals;
     
-    this->declare_parameter<std::string>("map_frame", "map");
-    this->get_parameter("map_frame", map_frame_);
+    map_frame_ = this->declare_parameter<std::string>("map_frame", "map");
+    bypass_planning_ = this->declare_parameter<bool>("bypass_planning", false);
     
     tf_buffer_ = 
       std::make_unique<tf2_ros::Buffer>(this->get_clock());
@@ -87,22 +87,14 @@ public:
       std::bind(&PlannerServer::handle_plan_accepted, this, _1));
       
     // Build a UFO map
-    double resolution = 0.25;   
-    this->declare_parameter<double>("map_resolution", 0.25);   // use resolution 0.25.  Can then query the map at 0.5 and 1.0
-    this->get_parameter("map_resolution", resolution);
+    double resolution;   
+    resolution = this->declare_parameter<double>("map_resolution", 0.25);   // use resolution 0.25.  Can then query the map at 0.5 and 1.0
     map_ = std::make_shared<ufo::map::OccupancyMap>(resolution); 
 
-    this->declare_parameter<double>("drone_diameter", 0.80);   // 800 mm for my current craft.
-    this->get_parameter("drone_diameter", drone_diameter_);   
-    
-    this->declare_parameter<int>("e_w_size", 500);
-    this->get_parameter("e_w_size", e_size_);   
-
-    this->declare_parameter<int>("n_s_size", 500);
-    this->get_parameter("n_s_size", n_size_);
-    
-    this->declare_parameter<int>("u_size", 10);
-    this->get_parameter("u_size", u_size_);   
+    drone_diameter_ = this->declare_parameter<double>("drone_diameter", 0.80);   // 800 mm for my current craft.
+    e_size_ = this->declare_parameter<int>("e_w_size", 500);
+    n_size_ = this->declare_parameter<int>("n_s_size", 500);
+    u_size_ = this->declare_parameter<int>("u_size", 10);
     
     dsl = new DStarLite(e_size_, n_size_, u_size_);
     
@@ -122,6 +114,7 @@ private:
   double drone_diameter_;
   DStarLite *dsl;
   int e_size_, n_size_, u_size_;
+  bool bypass_planning_;
   
   bool read_position(float *x, float *y, float *z)
   {  
@@ -242,43 +235,11 @@ private:
     rclcpp::Rate loop_rate(1);
     const auto goal = goal_handle->get_goal();
     auto result = std::make_shared<ComputePathToPose::Result>();
-    
-    // This is a computationally heavy process, and the drone is not being controlled.  In windy
-    // contitions the drone might be blown into an obstacle.  Plase the flight controller in 
-    //  HOLD mode to maintain position.
-    set_offboard(0);  // What if this call fails.  "What shall I do?" she cries!
-           
+
     auto start_time = this->now();
-        
-    // # If false, use current robot pose as path start, if true, use start above instead
-    if(goal->use_start == true) {
-      RCLCPP_DEBUG(this->get_logger(), "Planning a path from %.2f, %.2f, %.2f",
-        goal->start.pose.position.x, 
-        goal->start.pose.position.y, 
-        goal->start.pose.position.z);
-      dsl->setStart((int)goal->start.pose.position.x, (int)goal->start.pose.position.y, (int)goal->start.pose.position.z);  
-    } else {
-      // use the current robot position.
-      float x, y, z;
-      read_position(&x, &y, &z);  // From tf2      
-      dsl->setStart(x, y, z);
-      RCLCPP_INFO(this->get_logger(), "Planning a path from %.2f, %.2f, %.2f", x, y, z);
-    }
-   
-    dsl->setGoal((int)goal->goal.pose.position.x, (int)goal->goal.pose.position.y, (int)goal->goal.pose.position.z);    
-    dsl->initialize();   
-    dsl->computeShortestPath();
-    
-    dsl->extractPath(result->path.poses); 
-    if (result->path.poses.size() > 0) {
-      // Overwrite the pose on the goal step
-      result->path.poses.back().pose.orientation.x = goal->goal.pose.orientation.x;
-      result->path.poses.back().pose.orientation.y = goal->goal.pose.orientation.y;
-      result->path.poses.back().pose.orientation.z = goal->goal.pose.orientation.z;
-      result->path.poses.back().pose.orientation.w = goal->goal.pose.orientation.w; 
-    }; 
-      
-    /*
+    if (bypass_planning_) {
+      RCLCPP_WARN(this->get_logger(), "Bypassing path planning.");
+
       // An alternative to avoid path planning. Just return the goal. 
       geometry_msgs::msg::PoseStamped pose;
 
@@ -294,10 +255,45 @@ private:
       pose.pose.orientation.w = goal->goal.pose.orientation.w;   
     
       result->path.poses.push_back(pose);     
-   */
+   
+    } else {
+      // This is a computationally heavy process, and the drone is not being controlled.  In windy
+      // contitions the drone might be blown into an obstacle.  Plase the flight controller in 
+      //  HOLD mode to maintain position.
+      set_offboard(0);  // What if this call fails.  "What shall I do?" she cries!           
+        
+      // # If false, use current robot pose as path start, if true, use start above instead
+      if(goal->use_start == true) {
+        RCLCPP_DEBUG(this->get_logger(), "Planning a path from %.2f, %.2f, %.2f",
+          goal->start.pose.position.x, 
+          goal->start.pose.position.y, 
+          goal->start.pose.position.z);
+        dsl->setStart((int)goal->start.pose.position.x, (int)goal->start.pose.position.y, (int)goal->start.pose.position.z);  
+      } else {
+        // use the current robot position.
+        float x, y, z;
+        read_position(&x, &y, &z);  // From tf2      
+        dsl->setStart(x, y, z);
+        RCLCPP_INFO(this->get_logger(), "Planning a path from %.2f, %.2f, %.2f", x, y, z);
+      }
+   
+      dsl->setGoal((int)goal->goal.pose.position.x, (int)goal->goal.pose.position.y, (int)goal->goal.pose.position.z);    
+      dsl->initialize();   
+      dsl->computeShortestPath();
     
-    //  Done with the heavy calculation.  SLio back into offboard mode.
-    set_offboard(1);
+      dsl->extractPath(result->path.poses); 
+      if (result->path.poses.size() > 0) {
+        // Overwrite the pose on the goal step
+        result->path.poses.back().pose.orientation.x = goal->goal.pose.orientation.x;
+        result->path.poses.back().pose.orientation.y = goal->goal.pose.orientation.y;
+        result->path.poses.back().pose.orientation.z = goal->goal.pose.orientation.z;
+        result->path.poses.back().pose.orientation.w = goal->goal.pose.orientation.w; 
+      }; 
+    
+      //  Done with the heavy calculation.  Side back into offboard mode.
+      set_offboard(1);
+      
+    }
     
     // Check if goal is done
     if (rclcpp::ok()) {

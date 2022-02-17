@@ -89,7 +89,7 @@ void NavLiteComputePathToPoseAction::cleanup()
       RCLCPP_WARN(node_->get_logger(), "[%s] - Exception caught");
     }
   } else {
-    RCLCPP_INFO(node_->get_logger(), "[%s] - Cleaning up after SUCCESS", name().c_str());
+    RCLCPP_DEBUG(node_->get_logger(), "[%s] - Cleaning up after SUCCESS", name().c_str());
     // The Action Server Request completed as per normal.  Nothng to do.
   }
 }

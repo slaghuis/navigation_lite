@@ -93,7 +93,7 @@ void NavLiteFollowWaypointsAction::cleanup()
       RCLCPP_WARN(node_->get_logger(), "[%s] - Exception caught");
     }
   } else {
-    RCLCPP_INFO(node_->get_logger(), "[%s] - Cleaning up after SUCCESS", name().c_str());
+    RCLCPP_DEBUG(node_->get_logger(), "[%s] - Cleaning up after SUCCESS", name().c_str());
     // The Action Server Request completed as per normal.  Nothng to do.
   }
 }
@@ -152,7 +152,7 @@ void NavLiteFollowWaypointsAction::goal_response_callback(std::shared_future<Goa
         return;
     }
     
-    RCLCPP_INFO(node_->get_logger(), "Navigation path completedsuccessfully.");
+    RCLCPP_DEBUG(node_->get_logger(), "Navigation path completed successfully.");
   }  
   
 }  // namespace

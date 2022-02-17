@@ -52,6 +52,9 @@ def generate_launch_description():
         package = 'navigation_lite',
         name = 'planner_server',
         executable = 'planner_server',
+        parameters=[
+            {'bypass_planning' : False}
+        ],    
         output="screen",
         emulate_tty=True
     )
