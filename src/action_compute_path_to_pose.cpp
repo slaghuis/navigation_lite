@@ -119,7 +119,9 @@ void NavLiteComputePathToPoseAction::goal_response_callback(std::shared_future<G
     switch (result.code) {
       case rclcpp_action::ResultCode::SUCCEEDED:
         if (result.result->path.poses.size() == 0)
-        {  
+        { 
+          RCLCPP_ERROR(node_->get_logger(), "No valid path was returned");
+          
           action_status = ActionStatus::FAILED;  // No path could be found.  SLAM is the only way out of this mess.
         } else {
           

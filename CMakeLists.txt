@@ -58,6 +58,7 @@ ament_target_dependencies(navigation_action_server
   "rclcpp_components"
   "std_msgs"
   "geometry_msgs"
+  "sensor_msgs"
   "builtin_interfaces"
   "tf2" 
   "tf2_ros" 

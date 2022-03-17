@@ -53,6 +53,7 @@ class NavLiteComputePathToPoseAction : public BT::AsyncActionNode
         return{ BT::InputPort<Pose3D>("pose"), 
                 BT::InputPort<Pose3D>("start"), 
                 BT::OutputPort<std::vector<Pose3D>>("path")};
+        
     }
     
     BT::NodeStatus tick() override;

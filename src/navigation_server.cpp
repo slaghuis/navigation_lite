@@ -31,6 +31,7 @@
 #include "builtin_interfaces/msg/duration.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "navigation_interfaces/action/navigate_to_pose.hpp"
+#include "sensor_msgs/msg/battery_state.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -72,9 +73,13 @@ public:
     using namespace std::placeholders;
     
     // Read parameters
-    this->declare_parameter<std::string>("map_frame", "map");
-    this->get_parameter("map_frame", map_frame_);
+    map_frame_ = this->declare_parameter<std::string>("map_frame", "map");
+    minimum_battery_voltage_ = this->declare_parameter<float>("minimum_battery_voltage", 13.6);
+    current_battery_voltage_ = 14.8;  // Full LiPo S4
     
+    // Subscribe to some topics
+    subscription_ = this->create_subscription<sensor_msgs::msg::BatteryState>(
+      "drone/battery", 5, std::bind(&NavigationServer::battery_callback, this, std::placeholders::_1));
     
     // Create a transform listener
     tf_buffer_ =
@@ -95,8 +100,20 @@ private:
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;  
   std::string map_frame_;
+  float minimum_battery_voltage_;
+  float current_battery_voltage_;
 
-  // Last (transformed) pose of the drone
+  BT::NodeStatus CheckBattery()
+  {      
+    return (current_battery_voltage_ >= minimum_battery_voltage_) ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
+  }  
+  
+  void battery_callback(const sensor_msgs::msg::BatteryState::SharedPtr msg) 
+  {
+     current_battery_voltage_ = msg->voltage;
+  }
+  rclcpp::Subscription<sensor_msgs::msg::BatteryState>::SharedPtr subscription_;
+    
   rclcpp_action::Server<NavigateToPose>::SharedPtr action_server_;
   
 
@@ -125,10 +142,16 @@ private:
     std::thread{std::bind(&NavigationServer::execute, this, _1), goal_handle}.detach();
   }
 
+  /* std::string pose3D_string(Pose3D bt_goal_msg) {
+    std::stringstream ss;
+    ss << bt_goal_msg.x << ";" << bt_goal_msg.y << ";" << bt_goal_msg.z << ";" << bt_goal_msg.theta;
+    return ss.str();
+  }
+  */
   
   void execute(const std::shared_ptr<GoalHandleNavigateToPose> goal_handle)
   {
-    rclcpp::Rate loop_rate(1);
+    rclcpp::Rate loop_rate(1);    // Executing at 1 Hz
     const auto goal = goal_handle->get_goal();
     const auto wp = goal->pose;
     auto feedback = std::make_shared<NavigateToPose::Feedback>();
@@ -163,7 +186,7 @@ private:
     BehaviorTreeFactory factory;
     Tree tree;
     using namespace NavigationNodes; 
-    
+    factory.registerSimpleCondition("BatteryOK", std::bind(&NavigationServer::CheckBattery, this));
     factory.registerNodeType<RoundRobinNode>("RoundRobin"); 
     factory.registerNodeType<PipelineSequence>("PipelineSequence"); 
     factory.registerNodeType<RecoveryNode>("RecoveryNode"); 
@@ -174,11 +197,15 @@ private:
     factory.registerNodeType<NavLiteFollowWaypointsAction>("FollowWaypoints");
     factory.registerNodeType<NavLiteComputePathToPoseAction>("ComputePathToPose");
 
+    //BT::Blackboard::Ptr blackboard;
+    //tree = factory.createTreeFromFile(goal->behavior_tree, blackboard);    
+    //blackboard->set("pose", pose3D_string(bt_goal_msg));
     tree = factory.createTreeFromFile(goal->behavior_tree);
+    
     RCLCPP_DEBUG(this->get_logger(), "Tree Loaded");
     
-    // Initialise the BT Nodes
-    auto node_ptr = shared_from_this();                
+    auto node_ptr = shared_from_this();              
+    // Initialise the BT Nodes  
     // Iterate through all the nodes and call init() if it is an Action_B
     for( auto& node: tree.nodes )
     {
@@ -230,12 +257,11 @@ private:
       
       loop_rate.sleep();
     }
-
     
     // Check if goal is done
     if (rclcpp::ok()) {
       goal_handle->succeed(result);
-      RCLCPP_INFO(this->get_logger(), "Goal succeeded");
+      RCLCPP_DEBUG(this->get_logger(), "Goal succeeded");
     }
   }
    

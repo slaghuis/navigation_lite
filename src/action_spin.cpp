@@ -67,7 +67,7 @@ void NavLiteSpinAction::cleanup()
 
   if( _halt_requested )
   {
-    RCLCPP_INFO(node_->get_logger(), "[%s] - Cleaning up after a halt()", name().c_str());
+    RCLCPP_DEBUG(node_->get_logger(), "[%s] - Cleaning up after a halt()", name().c_str());
     try {
       goal_handle_ = future_goal_handle_->get();
       this->client_ptr_->async_cancel_goal(goal_handle_); // Request a cancellation.
@@ -75,7 +75,7 @@ void NavLiteSpinAction::cleanup()
       RCLCPP_WARN(node_->get_logger(), "[%s] - Exception caught");
     }
   } else {
-    RCLCPP_INFO(node_->get_logger(), "[%s] - Cleaning up after SUCCESS", name().c_str());
+    RCLCPP_DEBUG(node_->get_logger(), "[%s] - Cleaning up after SUCCESS", name().c_str());
     // The Action Server Request completed as per normal.  Nothng to do.
   }
 }
@@ -105,7 +105,7 @@ void NavLiteSpinAction::goal_response_callback(std::shared_future<GoalHandleSpin
     GoalHandleSpin::SharedPtr,
     const std::shared_ptr<const Spin::Feedback> feedback)
   {
-    RCLCPP_INFO(node_->get_logger(), "Angular distance travelled: %.2f radians.", feedback->angular_distance_traveled);
+    RCLCPP_DEBUG(node_->get_logger(), "Angular distance travelled: %.2f radians.", feedback->angular_distance_traveled);
   }
 
   void NavLiteSpinAction::result_callback(const GoalHandleSpin::WrappedResult & result)
@@ -128,7 +128,7 @@ void NavLiteSpinAction::goal_response_callback(std::shared_future<GoalHandleSpin
         return;
     }
     
-    RCLCPP_INFO(node_->get_logger(), "Spinning completed in %d seconds", result.result->total_elapsed_time.sec);
+    RCLCPP_DEBUG(node_->get_logger(), "Spinning completed in %d seconds", result.result->total_elapsed_time.sec);
   }  
   
 }  // namespace

@@ -69,7 +69,7 @@ void NavLiteWaitAction::cleanup()
 
   if( _halt_requested )
   {
-    RCLCPP_INFO(node_->get_logger(), "[%s] - Cleaning up after a halt()", name().c_str());
+    RCLCPP_DEBUG(node_->get_logger(), "[%s] - Cleaning up after a halt()", name().c_str());
     try {
       goal_handle_ = future_goal_handle_->get();
       this->client_ptr_->async_cancel_goal(goal_handle_); // Request a cancellation.
@@ -77,7 +77,7 @@ void NavLiteWaitAction::cleanup()
       RCLCPP_WARN(node_->get_logger(), "[%s] - Exception caught");
     }
   } else {
-    RCLCPP_INFO(node_->get_logger(), "[%s] - Cleaning up after SUCCESS", name().c_str());
+    RCLCPP_DEBUG(node_->get_logger(), "[%s] - Cleaning up after SUCCESS", name().c_str());
     // The Action Server Request completed as per normal.  Nothng to do.
   }
 }
@@ -97,7 +97,7 @@ void NavLiteWaitAction::goal_response_callback(std::shared_future<GoalHandleWait
       RCLCPP_ERROR(node_->get_logger(), "Goal was rejected by server");
       action_status = ActionStatus::REJECTED;
     } else {
-      RCLCPP_INFO(node_->get_logger(), "Goal accepted by server, waiting for result");
+      RCLCPP_DEBUG(node_->get_logger(), "Goal accepted by server, waiting for result");
       action_status = ActionStatus::PROCESSING;
     }
   }
@@ -106,7 +106,7 @@ void NavLiteWaitAction::goal_response_callback(std::shared_future<GoalHandleWait
     GoalHandleWait::SharedPtr,
     const std::shared_ptr<const Wait::Feedback> feedback)
   {
-    RCLCPP_INFO(node_->get_logger(), "Time Left: %ds", feedback->time_left.sec);
+    RCLCPP_DEBUG(node_->get_logger(), "Waiting time left: %ds", feedback->time_left.sec);
   }
 
   void NavLiteWaitAction::result_callback(const GoalHandleWait::WrappedResult & result)
@@ -114,22 +114,23 @@ void NavLiteWaitAction::goal_response_callback(std::shared_future<GoalHandleWait
     switch (result.code) {
       case rclcpp_action::ResultCode::SUCCEEDED:
         action_status = ActionStatus::SUCCEEDED;
+        RCLCPP_DEBUG(node_->get_logger(), "Waiting completed in %d seconds", result.result->total_elapsed_time.sec);
         break;
       case rclcpp_action::ResultCode::ABORTED:
-        RCLCPP_INFO(node_->get_logger(), "Goal was aborted");
+        RCLCPP_INFO(node_->get_logger(), "Waiting was aborted");
         action_status = ActionStatus::ABORTED;
         return;
       case rclcpp_action::ResultCode::CANCELED:
-        RCLCPP_INFO(node_->get_logger(), "Goal was canceled");
+        RCLCPP_INFO(node_->get_logger(), "Waiting was canceled");
         action_status = ActionStatus::CANCELED;
         return;
       default:
-        RCLCPP_WARN(node_->get_logger(), "Unknown result code");
+        RCLCPP_WARN(node_->get_logger(), "Waiting returned an unknown result code");
         action_status = ActionStatus::UNKNOWN;
         return;
     }
     
-    RCLCPP_INFO(node_->get_logger(), "Waiting completed in %d seconds", result.result->total_elapsed_time.sec);
+    
   }  
   
 }  // namespace

@@ -188,47 +188,6 @@ private:
     std::thread{std::bind(&PlannerServer::execute_plan, this, _1), goal_handle}.detach();
   }
 
-
-  bool set_offboard(int8_t mode) {
-  
-    rclcpp::Client<drone_interfaces::srv::Offboard>::SharedPtr client = 
-      create_client<drone_interfaces::srv::Offboard>("drone/offboard"); 
-     
-    auto request = std::make_shared<drone_interfaces::srv::Offboard::Request>();
-    request->enable = mode;
-    
-    while (!client->wait_for_service(250ms)) {
-      if (!rclcpp::ok()) {
-        RCLCPP_ERROR(rclcpp::get_logger("rclcpp"), "Interrupted while waiting for the service. Exiting.");
-        return false;
-      }
-      RCLCPP_DEBUG(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
-    }
-     
-    auto future = client->async_send_request(request);
-
-    std::future_status status;
-    do {
-      status = future.wait_for(250ms);  // Not spinning here!  We are in a thread, and the spinning is taken cared of elsewhere.
-      if (status == std::future_status::deferred) {
-        RCLCPP_DEBUG(rclcpp::get_logger("rclcpp"), "Future deferred");
-      } else if (status == std::future_status::timeout) {
-        RCLCPP_DEBUG(rclcpp::get_logger("rclcpp"), "Future timeout");
-      } else if (status == std::future_status::ready) {
-        RCLCPP_DEBUG(rclcpp::get_logger("rclcpp"), "Future ready!");
-      }
-    } while (status != std::future_status::ready); 
-     
-    bool service_result = false; 
-     
-    if (status == std::future_status::ready)
-    {
-      service_result = future.get()->result; 
-    } 
-     
-    return service_result;     
-  }
-
   void execute_plan(const std::shared_ptr<GoalHandleComputePathToPose> goal_handle)
   {
     RCLCPP_DEBUG(this->get_logger(), "Executing goal");
@@ -257,10 +216,6 @@ private:
       result->path.poses.push_back(pose);     
    
     } else {
-      // This is a computationally heavy process, and the drone is not being controlled.  In windy
-      // contitions the drone might be blown into an obstacle.  Plase the flight controller in 
-      //  HOLD mode to maintain position.
-      set_offboard(0);  // What if this call fails.  "What shall I do?" she cries!           
         
       // # If false, use current robot pose as path start, if true, use start above instead
       if(goal->use_start == true) {
@@ -289,10 +244,7 @@ private:
         result->path.poses.back().pose.orientation.z = goal->goal.pose.orientation.z;
         result->path.poses.back().pose.orientation.w = goal->goal.pose.orientation.w; 
       }; 
-    
-      //  Done with the heavy calculation.  Side back into offboard mode.
-      set_offboard(1);
-      
+          
     }
     
     // Check if goal is done

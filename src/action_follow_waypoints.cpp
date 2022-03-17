@@ -115,7 +115,7 @@ void NavLiteFollowWaypointsAction::goal_response_callback(std::shared_future<Goa
       RCLCPP_ERROR(node_->get_logger(), "Goal was rejected by server");
       action_status = ActionStatus::REJECTED;
     } else {
-      RCLCPP_INFO(node_->get_logger(), "Goal accepted by server, Waiting for result");
+      RCLCPP_INFO(node_->get_logger(), "Goal accepted by server navigation, Waiting for result");
       action_status = ActionStatus::PROCESSING;
     }
   }
@@ -124,7 +124,7 @@ void NavLiteFollowWaypointsAction::goal_response_callback(std::shared_future<Goa
     GoalHandleFollowWaypoints::SharedPtr,
     const std::shared_ptr<const FollowWaypoints::Feedback> feedback)
   {
-    RCLCPP_INFO(node_->get_logger(), "Current waypoint: %d.", feedback->current_waypoint);
+    RCLCPP_DEBUG(node_->get_logger(), "Current waypoint: %d.", feedback->current_waypoint);
   }
 
   void NavLiteFollowWaypointsAction::result_callback(const GoalHandleFollowWaypoints::WrappedResult & result)
@@ -134,6 +134,7 @@ void NavLiteFollowWaypointsAction::goal_response_callback(std::shared_future<Goa
         if (result.result->missed_waypoints.size() == 0)
         {  
           action_status = ActionStatus::SUCCEEDED;
+          RCLCPP_DEBUG(node_->get_logger(), "Navigation path completed successfully.");
         } else {
           action_status = ActionStatus::FAILED;
         }
@@ -152,7 +153,6 @@ void NavLiteFollowWaypointsAction::goal_response_callback(std::shared_future<Goa
         return;
     }
     
-    RCLCPP_DEBUG(node_->get_logger(), "Navigation path completed successfully.");
   }  
   
 }  // namespace

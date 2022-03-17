@@ -275,7 +275,7 @@ private:
       loop_rate.sleep();  // Give the drone time to move
     } while (!pose_is_close_);  
 
-    // Now that we are ponting, keep on adjusting yaw, but include altitude and froeward velocity
+    // Now that we are ponting, keep on adjusting yaw, but include altitude and foreward velocity
     pid_x->restart_control();
     pid_y->restart_control();
     pid_z->restart_control();
