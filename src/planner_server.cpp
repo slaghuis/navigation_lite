@@ -42,7 +42,7 @@
 #include "rclcpp_components/register_node_macro.hpp"
 
 #include "navigation_lite/visibility_control.h"
-#include "navigation_lite/conversions.h"
+#include "navigation_lite/ufomap_ros_msgs_conversions.h"
 #include "navigation_lite/d_star_lite.h"
 
 #include <tf2/exceptions.h>
@@ -145,7 +145,7 @@ private:
   void topic_callback(const navigation_interfaces::msg::UfoMapStamped::SharedPtr msg) const
   {
     // Convert ROS message to a UFOmap
-    if (navigation_interfaces::msgToUfo(msg->map, map_)) {
+    if (ufomap_msgs::msgToUfo(msg->map, map_)) {
       RCLCPP_DEBUG(this->get_logger(), "UFO Map Conversion successfull.");
     } else {
       RCLCPP_WARN(this->get_logger(), "UFO Map Conversion failed.");

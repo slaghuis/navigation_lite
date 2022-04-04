@@ -38,7 +38,8 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
 
-#include "navigation_lite/conversions.h"
+#include "navigation_lite/ufomap_ros_msgs_conversions.h"
+#include "navigation_lite/ufomap_ros_conversions.h"
 
 #include "navigation_interfaces/srv/save_map.hpp"
 #include "navigation_interfaces/srv/load_map.hpp"
@@ -46,6 +47,7 @@
 #include "navigation_interfaces/msg/ufo_map_stamped.hpp"
 
 using namespace std::chrono_literals;
+using namespace std::placeholders;
 
 namespace navigation_lite
 {
@@ -56,21 +58,12 @@ public:
   explicit MapServer(const rclcpp::NodeOptions & options)
   : Node("map_server", options)
   {
-    using namespace std::placeholders;
-    
-    // Create simple services
-    load_service = this->create_service<navigation_interfaces::srv::LoadMap>("nav_lite/load_map", std::bind(&MapServer::load_map, this, _1, _2));
-    save_service = this->create_service<navigation_interfaces::srv::SaveMap>("nav_lite/save_map", std::bind(&MapServer::save_map, this, _1, _2));
-    reset_service = this->create_service<navigation_interfaces::srv::Reset>("nav_lite/reset_map", std::bind(&MapServer::reset_map, this, _1, _2));
-   
     // Declare and read some parameters
-    
-
     map_frame_id_ = this->declare_parameter<std::string>("map_frame", "error");
     map_topic_ = this->declare_parameter<std::string>("map_topic", "error");
     pointcloud_topic_ = this->declare_parameter<std::string>("pointcloud_topic", "pointcloud");
 
-    this->declare_parameter<double>("map_resolution", 0.25);   // use resolution 0.25.  Can then query the map at 0.5 and 1.0
+    this->declare_parameter<double>("map_resolution", 0.1);      // Spatial extent of tree is 6553,6 meters in either direction
     
     max_range_ = this->declare_parameter<double>("max_range", -1.0);      // Max range (m) when inserting data into map
     insert_depth_ = this->declare_parameter<int>("insert_depth", 0);      // Integration depth
@@ -158,6 +151,11 @@ private:
       1000ms, std::bind(&MapServer::publish_map, this));  
     //publish_map();  // Send the first map, and then only when it has been updated.
   
+    // Create simple services
+    load_service = this->create_service<navigation_interfaces::srv::LoadMap>("nav_lite/load_map", std::bind(&MapServer::load_map, this, _1, _2));
+    save_service = this->create_service<navigation_interfaces::srv::SaveMap>("nav_lite/save_map", std::bind(&MapServer::save_map, this, _1, _2));
+    reset_service = this->create_service<navigation_interfaces::srv::Reset>("nav_lite/reset_map", std::bind(&MapServer::reset_map, this, _1, _2));
+
   }
 
   void publish_map()
@@ -178,14 +176,14 @@ private:
     auto message = std::make_shared<navigation_interfaces::msg::UfoMapStamped>();
     //navigation_interfaces::msg::UfoMapStamped::Ptr message(new navigation_interfaces::msg::UfoMapStamped);
     //Convert UFOMap to ROS Message
-    if (navigation_interfaces::ufoToMsg(*map_, message->map, ufo::geometry::BoundingVolume(), compress, pub_depth, 1, 0)) {
+    if (ufomap_msgs::ufoToMsg(*map_, message->map, ufo::geometry::BoundingVolume(), compress, pub_depth, 1, 0)) {
       message->header.stamp = now;
       message->header.frame_id = map_frame_id_;    // Should be "map"
       map_publisher_->publish(*message);
       RCLCPP_DEBUG(this->get_logger(), "Map published");
     }  
   }
-  
+  /*
   ufo::math::Pose6 rosToUfo(geometry_msgs::msg::Transform const& transform)
   {
 	  return ufo::math::Pose6(transform.translation.x, transform.translation.y,
@@ -194,32 +192,7 @@ private:
 	                          transform.rotation.z);
   }
 
-  void getFields(sensor_msgs::msg::PointCloud2 const& cloud, bool& has_x, bool& has_y,
-               bool& has_z, bool& has_rgb)
-  {
-	  has_x = false;
-	  has_y = false;
-	  has_z = false;
-	  has_rgb = false;
-
-	  for (auto const& field : cloud.fields) {
-		  if ("x" == field.name) {
-			  has_x = true;
-		  } else if ("y" == field.name) {
-			  has_y = true;
-		  } else if ("z" == field.name) {
-			  has_z = true;
-		  } else if ("rgb" == field.name) {
-			  has_rgb = true;
-		  } else if ("r" == field.name) {
-			  has_rgb = true;
-		  } else if ("g" == field.name) {
-			  has_rgb = true;
-		  } else if ("b" == field.name) {
-		  	has_rgb = true;
-	  	}
-	  }
-  }  
+ 
     
   void rosToUfo(sensor_msgs::msg::PointCloud2 const& cloud_in,
               ufo::map::PointCloudColor& cloud_out)
@@ -262,7 +235,7 @@ private:
 		  }
     }
   }
-    
+  */  
   void topic_callback(sensor_msgs::msg::PointCloud2::SharedPtr msg)
   {
 
@@ -275,7 +248,7 @@ private:
                                                                               msg->header.frame_id, 
                                                                               tf2::TimePointZero);
       // Convert ROS transform to UFO transform
-      transform = rosToUfo(tf_trans.transform);
+      transform = ufomap_ros::rosToUfo(tf_trans.transform);
       
     } catch (tf2::TransformException &ex) {
       RCLCPP_WARN(
@@ -286,7 +259,7 @@ private:
 
     ufo::map::PointCloudColor cloud;
     // Convert ROS point cloud to UFO point cloud
-    rosToUfo(*msg, cloud);
+    ufomap_ros::rosToUfo(*msg, cloud);
     // Transform point cloud to correct frame, do it in parallel (second param true)
     cloud.transform(transform, true);
 
@@ -302,7 +275,7 @@ private:
                                                                                     robot_frame_id_, 
                                                                                     tf2::TimePointZero);
         // Convert ROS transform to UFO transform
-        transform = rosToUfo(tf_trans.transform);
+        transform = ufomap_ros::rosToUfo(tf_trans.transform);
       
       } catch (tf2::TransformException &ex) {
         RCLCPP_WARN(
@@ -331,7 +304,7 @@ private:
 //    response->success = map_->write(request->filename, false, request->depth);
         
 		ufo::geometry::BoundingVolume bv =
-			        navigation_interfaces::msgToUfo(request->bounding_volume);
+			        ufomap_msgs::msgToUfo(request->bounding_volume);
 			    response->success = map_->write(request->filename, bv, request->compress,
 			                                 request->depth, 1, request->compression_level);
 	  return true;

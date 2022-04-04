@@ -64,7 +64,7 @@
 #include "navigation_lite/visibility_control.h"
 #include "navigation_lite/pid.hpp"
 #include "navigation_lite/holddown_timer.hpp"
-#include "navigation_lite/conversions.h"
+#include "navigation_lite/ufomap_ros_msgs_conversions.h"
 
 static const float DEFAULT_MAX_SPEED_XY = 2.0;          // Maximum horizontal speed, in m/s
 static const float DEFAULT_MAX_ACCEL_XY = 0.2;          // Maximum horizontal acceleration, in m/s/s
@@ -216,7 +216,7 @@ private:
   void topic_callback(const navigation_interfaces::msg::UfoMapStamped::SharedPtr msg) const
   {
     // Convert ROS message to a UFOmap
-    if (navigation_interfaces::msgToUfo(msg->map, map_)) {
+    if (ufomap_msgs::msgToUfo(msg->map, map_)) {
       RCLCPP_DEBUG(this->get_logger(), "UFO Map Conversion successfull.");
     } else {
       RCLCPP_WARN(this->get_logger(), "UFO Map Conversion failed.");
