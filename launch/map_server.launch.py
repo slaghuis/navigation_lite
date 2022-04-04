@@ -16,7 +16,11 @@ def generate_launch_description():
         executable = 'map_server',
         output="screen",
         emulate_tty=True,
-        parameters = [config]
+        parameters=[
+            {'map_frame'          : 'map'},
+            {'map_topic'          : 'nav_lite/map'},
+            {'pointcloud_topic'   : 'sensors/pointcloud'}
+        ]
     )
     ld.add_action(node)
     return ld
