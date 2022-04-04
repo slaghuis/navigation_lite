@@ -202,6 +202,9 @@ private:
       std::bind(&RecoveryServer::wait_handle_cancel, this, _1),
       std::bind(&RecoveryServer::wait_handle_accepted, this, _1));   
     RCLCPP_INFO(this->get_logger(), "Action Server [nav_lite/wait] started");
+    
+    server_mutex.unlock();
+
    }   
     
   // FLIGHT CONTROL ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -475,6 +478,7 @@ private:
     } while (!pose_is_close_); 
 
     stop_movement();
+    server_mutex.unlock();
     
     // Mark goal as done
     if (rclcpp::ok()) {
@@ -482,7 +486,7 @@ private:
       goal_handle->succeed(result);
       RCLCPP_DEBUG(this->get_logger(), "Spin Goal succeeded");
     }
-    server_mutex.unlock();
+    
   }  
   
   // WAIT /////////////////////////////////////////////////////////////////////////////////////
@@ -565,13 +569,14 @@ private:
     };
 
     stop_movement();
+    server_mutex.unlock();
     
     // Check if goal is done
     if (rclcpp::ok()) {
       result->total_elapsed_time = steady_clock_.now() - start_time;
       goal_handle->succeed(result);
     }
-    server_mutex.unlock();
+    
   }  
   
   bool read_position(double *x, double *y, double *z, double *w)

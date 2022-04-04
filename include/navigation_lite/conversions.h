@@ -53,6 +53,8 @@
 #include <ufo/geometry/ray.h>
 #include <ufo/geometry/sphere.h>
 
+#include <ufo/map/occupancy_map.h>
+
 // Navigation Messages for UFO 
 #include <navigation_interfaces/msg/aabb.hpp>
 #include <navigation_interfaces/msg/bounding_volume.hpp>
@@ -187,8 +189,8 @@ bool ufoToMsg(TreeType const& tree, navigation_interfaces::msg::UfoMap& msg,
   std::string const& data_string = data_stream.str();
   msg.data = std::vector<int8_t>(data_string.begin(), data_string.end());
   return true;
-}
+}  
 
-}  // namespace UfoMap_msgs
+}  // namespace navigation_interfaces
 
 #endif  // CONVERSIONS_H
