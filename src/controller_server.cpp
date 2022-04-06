@@ -14,12 +14,12 @@
 
 /* **********************************************************************
  * Subscribe to tf2 map->base_link for position and pose data
- * Subscribe to nav_lite/map [navigation_interfaces::msg::UfoMapStamped] 
+ * Subscribe to nav_lite/map [octomap_msgs::msg::Octomap] 
  *
  * Action Server responding to navgation_interfaces/action/FollowWaypoints
  *   called only by the Navigation Server
  * Publishes cmd_vel as geometry_msgs/msg/Twist to effect motion.
- * The morion strategy would be:
+ * The motion strategy would be:
  *   - Amend yaw, to point to the next waypoint
  *   - Increase foreward velocity to reach desitnation, using a PID 
  *       controller to govern speed
@@ -49,7 +49,6 @@
 #include "navigation_interfaces/action/follow_waypoints.hpp"
 #include "navigation_interfaces/action/spin.hpp"
 #include "navigation_interfaces/action/wait.hpp"
-#include "navigation_interfaces/msg/ufo_map_stamped.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -59,12 +58,15 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
 
-#include <ufo/map/occupancy_map.h>
+#include <octomap/octomap.h>
+#include <octomap/OcTree.h>
+
+#include <octomap_msgs/conversions.h>
+#include "octomap_msgs/msg/octomap.hpp"
 
 #include "navigation_lite/visibility_control.h"
 #include "navigation_lite/pid.hpp"
 #include "navigation_lite/holddown_timer.hpp"
-#include "navigation_lite/conversions.h"
 
 static const float DEFAULT_MAX_SPEED_XY = 2.0;          // Maximum horizontal speed, in m/s
 static const float DEFAULT_MAX_ACCEL_XY = 0.2;          // Maximum horizontal acceleration, in m/s/s
@@ -83,7 +85,6 @@ inline double getDiff2Angles(const double x, const double y, const double c)
   
   double sign = ((x-y >= 0.0) && (x-y <= c)) || ((x-y <= -c) && (x-y> -2*c)) ? 1.0 : -1.0;
   return sign * r;                                           
-
 }
 
 namespace navigation_lite
@@ -134,10 +135,10 @@ private:
   
   // Holddown Timer
   std::shared_ptr<HolddownTimer> holddown_timer;
-  
-  // UFO Map
-  std::shared_ptr<ufo::map::OccupancyMap> map_;
-  double drone_diameter_;
+
+  float robot_diameter_;
+  float robot_height_;
+  std::unique_ptr<octomap::OcTree> octomap_;
     
   void init() {
     using namespace std::placeholders;
@@ -159,8 +160,9 @@ private:
     holddown_ = this->declare_parameter<int>("holddown", DEFAULT_HOLDDOWN);
     
     map_frame_ = this->declare_parameter<std::string>("map_frame", "map");
-    drone_diameter_ = this->declare_parameter<double>("drone_diameter", 0.80);   // 800 mm for my current craft.   
-    
+    robot_diameter_ = this->declare_parameter<double>("drone_diameter", 0.80);   // 800 mm for my current craft.
+    robot_height_   = this->declare_parameter<double>("drone_height", 0.50);
+
     // The grid size of the map is still hard coded, thus this is treated as a constant
     yaw_control_limit_ = 1.0;   // Distance from waypoint where control moves to X and Y PID rather than Yaw and X 
         
@@ -194,12 +196,7 @@ private:
     publisher_ =
       this->create_publisher<geometry_msgs::msg::Twist>("drone/cmd_vel", 1);
 
-    // Build a UFO map
-    double resolution = 0.25;   
-    resolution = this->declare_parameter<double>("map_resolution", 0.25);   // use resolution 0.25.  Can then query the map at 0.5 and 1.0
-    map_ = std::make_shared<ufo::map::OccupancyMap>(resolution); 
-
-    subscription_ = this->create_subscription<navigation_interfaces::msg::UfoMapStamped>(
+    subscription_ = this->create_subscription<octomap_msgs::msg::Octomap>(
       "nav_lite/map", 10, std::bind(&ControllerServer::topic_callback, this, _1));
 
     // Create the action server
@@ -212,21 +209,25 @@ private:
     RCLCPP_INFO(this->get_logger(), "Action Server [nav_lite/follow_waypoints] started");    
   }   
   
-// MAP SUBSCRIPTION ///////////////////////////////////////////////////////////////////////////////////////////////
-  void topic_callback(const navigation_interfaces::msg::UfoMapStamped::SharedPtr msg) const
+// MAP SUBSCRIPTION ////////////////////////////////////////////////////////////////////////////////////////////////
+  void topic_callback(const octomap_msgs::msg::Octomap::SharedPtr msg) 
   {
-    // Convert ROS message to a UFOmap
-    if (navigation_interfaces::msgToUfo(msg->map, map_)) {
-      RCLCPP_DEBUG(this->get_logger(), "UFO Map Conversion successfull.");
+    // Convert ROS message to a OctoMap
+    std::unique_ptr<octomap::AbstractOcTree> tree{octomap_msgs::msgToMap(*msg)};
+    if (tree) {
+      octomap_ = std::unique_ptr<octomap::OcTree>( dynamic_cast<octomap::OcTree *>(tree.release()));
+    }
+        
+    if (octomap_){ // can be NULL
+      RCLCPP_DEBUG(this->get_logger(), "Octree Conversion successfull.");
     } else {
-      RCLCPP_WARN(this->get_logger(), "UFO Map Conversion failed.");
+      RCLCPP_WARN(this->get_logger(), "Octree Conversion failed.");
     }
   }
-  rclcpp::Subscription<navigation_interfaces::msg::UfoMapStamped>::SharedPtr subscription_;
+  rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr subscription_;
   
 
 // FLIGHT CONTROL ////////////////////////////////////////////////////////////////////////////////////////////////
-  
   bool fly_to_waypoint(geometry_msgs::msg::PoseStamped wp) {
     rclcpp::Rate loop_rate( freq_ );
 
@@ -515,78 +516,27 @@ private:
     RCLCPP_DEBUG(this->get_logger(), "ACTION EXECUTION COMPLETE");
   }
 
-  bool isInCollision(std::shared_ptr<ufo::map::OccupancyMap> map, 
-                   ufo::geometry::BoundingVar const& bounding_volume, 
-                   bool occupied_space = true, bool free_space = false,
-                   bool unknown_space = false, ufo::map::DepthType min_depth = 0)
-  {
-    // Iterate through all leaf nodes that intersects the bounding volume
-    for (auto it = map->beginLeaves(bounding_volume, occupied_space, 
-                                   free_space, unknown_space, false, min_depth), 
-        it_end = map->endLeaves(); it != it_end; ++it) {
-      // Is in collision since a leaf node intersects the bounding volume.
-      return true;
-    }
-    // No leaf node intersects the bounding volume.
-    return false;
-  }
-  
+
+
+  // Quary the octomap to see if there is clear line of sight to the given coordinates
   bool isPathClear(const float x, const float y, const float z)
   {
   
+    // Read the current position
     double cx, cy, cz, cw;
     read_position(&cx, &cy, &cz, &cw);  // From tf2
     
-    RCLCPP_DEBUG(this->get_logger(), "Drone at %.2f,%.2f,%.2f requested to move to %.2f,%.2f,%.2f ", cx, cy, cz, x, y, z);
+    // Cast a ray to the target position to see if any obstructions have appeared
+    octomap::point3d origin(cx, cy, cz);
+    octomap::point3d direction(x-cx, y-cy, z-cz);
+    octomap::point3d end_point(0,0,0);    
+    double maxRange = sqrt( pow(x-cx,2) + pow(y-cy, 2) + pow(z-cz, 2) );   // Calculate the magnitude of the vector
     
-    // Either fly horizontally, or fly vertically, but not both
-    /*
-    double err_x = cx - x; 
-    double err_y = cy - y;
-      
-    bool horizontal = sqrt(pow(err_x,2) + pow(err_y,2)) > waypoint_radius_error_;
-    bool vertical = fabs(cz - z) > altitude_threshold_;
-    if (vertical && horizontal) {
+    if (octomap_->castRay(origin, direction, end_point, true, maxRange) ) {
+      // An occupied node was hit at end_point
+      RCLCPP_DEBUG(this->get_logger(), "Path obstructed at %.2f,%.2f,%.2f", end_point.x(), end_point.y(), end_point.z());
+
       return false;
-    }
-    */
-     
-    // The robot's current position
-    ufo::math::Vector3 position(cx, cy, cz);
-
-    // The goal, where the robot wants to move
-    ufo::math::Vector3 goal( (int)x, (int)y, (int)z );
-
-    // The robot's size (radius)
-    double radius = drone_diameter_/2;
-
-    // Check if it is possible to move between the robot's current position and goal
-
-    // The direction from position to goal
-    ufo::math::Vector3 direction = goal - position;
-    // The center between position and goal
-    ufo::math::Vector3 center = position + (direction / 2.0);
-    // The distance between position and goal
-    double distance = direction.norm();
-    // Normalize direction
-    direction /= distance;
-
-    // Calculate yaw, pitch and roll for oriented bounding box
-    double yaw = -atan2(direction[1], direction[0]);
-    double pitch = -asin(direction[2]);
-    double roll = 0;  // TODO: Fix
-  
-    // Create an oriented bounding box between position and goal, with a size radius.
-    ufo::geometry::OBB obb(center, ufo::math::Vector3(distance / 2.0, radius, radius),
-		  	     ufo::math::Quaternion(roll, pitch, yaw));
-
-    // Check if the oriented bounding box collides with either occupied or unknown space,
-    // at depth 3 (16 cm)
-    if (isInCollision(map_, obb, true, false, false, 3)) {
-      return false;
-      //std::cout << "The path between position and goal is not clear" << std::endl;
-    } else {
-      //std::cout << "It is possible to move between position and goal in a straight line" << std::endl;
     }
     
     return true;  
