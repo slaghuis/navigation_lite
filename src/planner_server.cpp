@@ -15,7 +15,7 @@
 /* **********************************************************************
  * Action Server responding to navgation_interfaces/action/ComputePathToPose
  *   called only by the Navigation Server
- * Subscribe to map server [navigation_interfaces/msg/ufo_map_stamped] to 
+ * Subscribe to map server topic navlite/map [octomap_msgs::msg::Octomap] to 
  *   receive a maintained octree global map.
  * Responds to the Action Client with a path derived from the Octree 
  * Motion planning algorithm based on the D* Lite algorithm. 
@@ -33,7 +33,6 @@
 #include "nav_msgs/msg/path.hpp"
 
 #include "navigation_interfaces/action/compute_path_to_pose.hpp"
-#include "navigation_interfaces/msg/ufo_map_stamped.hpp"
 
 #include "drone_interfaces/srv/offboard.hpp"
 
@@ -42,14 +41,17 @@
 #include "rclcpp_components/register_node_macro.hpp"
 
 #include "navigation_lite/visibility_control.h"
-#include "navigation_lite/conversions.h"
 #include "navigation_lite/d_star_lite.h"
 
 #include <tf2/exceptions.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
 
-#include <ufo/map/occupancy_map.h>
+#include <octomap/octomap.h>
+#include <octomap/OcTree.h>
+
+#include <octomap_msgs/conversions.h>
+#include "octomap_msgs/msg/octomap.hpp"
 
 using namespace std::placeholders;
 
@@ -76,7 +78,7 @@ public:
     transform_listener_ =
       std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     
-    subscription_ = this->create_subscription<navigation_interfaces::msg::UfoMapStamped>(
+    subscription_ = this->create_subscription<octomap_msgs::msg::Octomap>(
       "nav_lite/map", 10, std::bind(&PlannerServer::topic_callback, this, _1));
      
     this->planning_action_server_ = rclcpp_action::create_server<ComputePathToPose>(
@@ -86,12 +88,11 @@ public:
       std::bind(&PlannerServer::handle_plan_cancel, this, _1),
       std::bind(&PlannerServer::handle_plan_accepted, this, _1));
       
-    // Build a UFO map
-    double resolution;   
-    resolution = this->declare_parameter<double>("map_resolution", 0.25);   // use resolution 0.25.  Can then query the map at 0.5 and 1.0
-    map_ = std::make_shared<ufo::map::OccupancyMap>(resolution); 
-
-    drone_diameter_ = this->declare_parameter<double>("drone_diameter", 0.80);   // 800 mm for my current craft.
+    robot_diameter_ = this->declare_parameter<double>("drone_diameter", 0.80);   // 800 mm for my current craft.
+    robot_height_   = this->declare_parameter<double>("drone_height", 0.50);
+    
+    // This is constrain the cost map.  I cannot fly further than this.  
+    // Guess this has to be re-thought a bit.
     e_size_ = this->declare_parameter<int>("e_w_size", 500);
     n_size_ = this->declare_parameter<int>("n_s_size", 500);
     u_size_ = this->declare_parameter<int>("u_size", 10);
@@ -107,11 +108,12 @@ public:
 
 private:
   rclcpp_action::Server<ComputePathToPose>::SharedPtr planning_action_server_;
-  std::shared_ptr<ufo::map::OccupancyMap> map_;
+  std::unique_ptr<octomap::OcTree> octomap_;
   std::string map_frame_;
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
-  double drone_diameter_;
+  float robot_diameter_;
+  float robot_height_;
   DStarLite *dsl;
   int e_size_, n_size_, u_size_;
   bool bypass_planning_;
@@ -142,19 +144,23 @@ private:
   }
   
   // MAP SUBSCRIPTION ////////////////////////////////////////////////////////////////////////////////////////////////
-  void topic_callback(const navigation_interfaces::msg::UfoMapStamped::SharedPtr msg) const
+  void topic_callback(const octomap_msgs::msg::Octomap::SharedPtr msg) 
   {
-    // Convert ROS message to a UFOmap
-    if (navigation_interfaces::msgToUfo(msg->map, map_)) {
-      RCLCPP_DEBUG(this->get_logger(), "UFO Map Conversion successfull.");
+    // Convert ROS message to a OctoMap
+    std::unique_ptr<octomap::AbstractOcTree> tree{octomap_msgs::msgToMap(*msg)};
+    if (tree) {
+      octomap_ = std::unique_ptr<octomap::OcTree>( dynamic_cast<octomap::OcTree *>(tree.release()));
+    }
+        
+    if (octomap_){ // can be NULL
+      RCLCPP_DEBUG(this->get_logger(), "Octree Conversion successfull.");
     } else {
-      RCLCPP_WARN(this->get_logger(), "UFO Map Conversion failed.");
+      RCLCPP_WARN(this->get_logger(), "Octree Conversion failed.");
     }
   }
-  rclcpp::Subscription<navigation_interfaces::msg::UfoMapStamped>::SharedPtr subscription_;
+  rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr subscription_;
   
   // PLANNER ACTION SERVER ///////////////////////////////////////////////////////////////////////////////////////////
-
   rclcpp_action::GoalResponse handle_plan_goal(
     const rclcpp_action::GoalUUID & uuid,
     std::shared_ptr<const ComputePathToPose::Goal> goal)
@@ -198,11 +204,12 @@ private:
     auto start_time = this->now();
     if (bypass_planning_) {
       RCLCPP_WARN(this->get_logger(), "Bypassing path planning.");
+      rclcpp::Time now = this->get_clock()->now();
 
       // An alternative to avoid path planning. Just return the goal. 
       geometry_msgs::msg::PoseStamped pose;
 
-      // pose.header.stamp = this->now();
+      pose.header.stamp = now;
       pose.header.frame_id = "map"; 
       pose.pose.position.x = goal->goal.pose.position.x;
       pose.pose.position.y = goal->goal.pose.position.y;
@@ -213,8 +220,7 @@ private:
       pose.pose.orientation.z = goal->goal.pose.orientation.z; 
       pose.pose.orientation.w = goal->goal.pose.orientation.w;   
     
-      result->path.poses.push_back(pose);     
-   
+      result->path.poses.push_back(pose);        
     } else {
         
       // # If false, use current robot pose as path start, if true, use start above instead
@@ -256,35 +262,28 @@ private:
   }
 
   // MAPPING UTILITY FUNCTIONS //////////////////////////////////////////////////////////////////////
-
   bool isOccupied(const float x, float y, float z)
   {
-    // Would it be better to see if the robot can travel between current position (tf_listener)
-    // and the target posiiton ina straight line.  Then the granularity of my d*lite algoritm and
-    // the UFO map changes a bit.
-    
-    // The robot's target position
-    ufo::math::Vector3 position((double)x, double(y), (double)z);
+    RCLCPP_DEBUG(this->get_logger(), "Testing [%.2f, %.2f, %.2f]", x, y, z);
+    if (octomap_) {
+      // Set a boundig box around the passed x, y, z coordinates to see if the drone can fit here    
+      // This box is axis aligned, so make sure you build a bit of a safey margin into the parameter
+      float robot_half_diameter = robot_diameter_ / 2;
+      octomap::point3d bbxMin(x-robot_half_diameter, y-robot_half_diameter, z);
+      octomap::point3d bbxMax(x+robot_half_diameter, y+robot_half_diameter, z + robot_height_);
+      for(octomap::OcTree::leaf_bbx_iterator it = octomap_->begin_leafs_bbx(bbxMin,bbxMax),
+          end=octomap_->end_leafs_bbx(); it!= end; ++it) {
 
-    // The robot's size (radius)
-    double radius = drone_diameter_ / 2;
-
-    // Sphere with center at position and radius radius.
-    ufo::geometry::Sphere sphere(position, radius);
-
-    // Check if the robot will be in collision with occupied space 
-    // at the finest map resolution.
-
-    // Iterate through all leaf nodes that intersects the bounding volume
-    for (auto it = map_->beginLeaves(sphere, true, 
-                                 false, false, false, 2),            // Use resolution of 0->0.25m, 1->0.5m 2->1.0m
-                                 it_end = map_->endLeaves(); it != it_end; ++it) {
-      // Is in collision since a leaf node intersects the bounding volume.
-      return true;
+        octomap::OcTreeNode* node = octomap_->search( it.getKey() );
+        if(node!=NULL) {   // NULL = Undefined
+          if (octomap_->isNodeOccupied(node)) {
+            return true;
+          }        
+        }
+      }
     }
-    // No leaf node intersects the bounding volume.
-    return false;
-        
+    
+    return false;        
   }
   
 };  // class PlannerServer

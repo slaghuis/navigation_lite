@@ -251,6 +251,7 @@ private:
       auto err_x = wp.pose.position.x - current_pose.pose.position.x; 
       auto err_y = wp.pose.position.y - current_pose.pose.position.y; 
       auto err_z = wp.pose.position.y - current_pose.pose.position.z; 
+      
       distance_remaining = sqrt(pow(err_z,2) + pow(err_x,2) + pow(err_y,2)); // float32 distance_remaining
       
       goal_handle->publish_feedback(feedback);
@@ -266,9 +267,9 @@ private:
   }
    
   // Transformation Listener/////////////////////////////////////////////////////
-  bool read_position( geometry_msgs::msg::PoseStamped current_pose )
+  bool read_position( geometry_msgs::msg::PoseStamped &current_pose )
   {  
-    std::string from_frame = "base_link_ned"; 
+    std::string from_frame = "base_link"; 
     std::string to_frame = map_frame_.c_str();
       
     geometry_msgs::msg::TransformStamped transformStamped;
@@ -286,7 +287,7 @@ private:
       current_pose.pose.orientation.x = transformStamped.transform.rotation.x;
       current_pose.pose.orientation.y = transformStamped.transform.rotation.y;
       current_pose.pose.orientation.z = transformStamped.transform.rotation.z;
-      current_pose.pose.orientation.w = transformStamped.transform.rotation.w;
+      current_pose.pose.orientation.w = transformStamped.transform.rotation.w;      
       
     } catch (tf2::TransformException & ex) {
       RCLCPP_DEBUG(
