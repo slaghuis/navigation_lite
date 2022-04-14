@@ -22,6 +22,7 @@ find_package(drone_interfaces REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(rclcpp_components REQUIRED)
+find_package(pluginlib REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -74,6 +75,7 @@ target_include_directories(controller_action_server PRIVATE
   $<INSTALL_INTERFACE:include>)
 target_compile_definitions(controller_action_server
   PRIVATE "NAVIGATION_LITE_BUILDING_DLL")
+target_link_libraries(controller_action_server ${OCTOMAP_LIBRARIES})    
 ament_target_dependencies(controller_action_server
   "rclcpp"
   "rclcpp_action"
@@ -88,19 +90,37 @@ ament_target_dependencies(controller_action_server
   "tf2_geometry_msgs"
   "navigation_interfaces"
   "drone_interfaces"
+  "octomap"
   "octomap_msgs")
 
 rclcpp_components_register_node(controller_action_server PLUGIN "navigation_lite::ControllerServer" EXECUTABLE controller_server)
 
-add_library(planner_action_server SHARED
-  src/planner_server.cpp
-  src/d_star_lite.cpp)
-target_include_directories(planner_action_server PRIVATE
+add_executable(planner_server 
+  src/planner_server.cpp)
+target_include_directories(planner_server PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_compile_definitions(planner_action_server
+target_link_libraries(planner_server ${OCTOMAP_LIBRARIES})  
+ament_target_dependencies(planner_server
+  "rclcpp"
+  "rclcpp_action"
+  "tf2"
+  "tf2_ros"
+  "navigation_interfaces"
+  "pluginlib"
+  "octomap"
+  "octomap_msgs"
+  "nav_msgs"
+  "geometry_msgs")
+
+add_library(coverage_planner_action_server SHARED
+  src/coverage_planner_server.cpp)
+target_include_directories(coverage_planner_action_server PRIVATE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_definitions(coverage_planner_action_server
   PRIVATE "NAVIGATION_LITE_BUILDING_DLL")
-ament_target_dependencies(planner_action_server
+ament_target_dependencies(coverage_planner_action_server
   "rclcpp"
   "rclcpp_action"
   "rclcpp_components"
@@ -113,10 +133,9 @@ ament_target_dependencies(planner_action_server
   "tf2_msgs"
   "tf2_geometry_msgs" 
   "navigation_interfaces"
-  "drone_interfaces"
-  "octomap_msgs")
+)
+rclcpp_components_register_node(coverage_planner_action_server PLUGIN "navigation_lite::PlannerServer" EXECUTABLE coverage_planner_server)
 
-rclcpp_components_register_node(planner_action_server PLUGIN "navigation_lite::PlannerServer" EXECUTABLE planner_server)
 
 add_library(recovery_action_server SHARED
   src/recovery_server.cpp)
@@ -144,11 +163,13 @@ rclcpp_components_register_node(recovery_action_server PLUGIN "navigation_lite::
 install(TARGETS
   navigation_action_server
   controller_action_server
-  planner_action_server
   recovery_action_server
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
+  
+install(TARGETS planner_server
+  DESTINATION lib/${PROJECT_NAME})
   
 install(DIRECTORY
   launch

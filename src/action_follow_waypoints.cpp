@@ -115,7 +115,7 @@ void NavLiteFollowWaypointsAction::goal_response_callback(std::shared_future<Goa
       RCLCPP_ERROR(node_->get_logger(), "Goal was rejected by server");
       action_status = ActionStatus::REJECTED;
     } else {
-      RCLCPP_INFO(node_->get_logger(), "Goal accepted by server navigation, Waiting for result");
+      RCLCPP_DEBUG(node_->get_logger(), "Goal passes from beahviour [action_follow_waypoints] and  accepted by server controller server, Waiting for result");
       action_status = ActionStatus::PROCESSING;
     }
   }

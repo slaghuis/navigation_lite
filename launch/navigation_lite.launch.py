@@ -4,6 +4,8 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 def generate_launch_description():
 
+    ld = LaunchDescription()
+    
     controller_server=Node(
         package = 'navigation_lite',
         name = 'controller_server',
@@ -37,7 +39,7 @@ def generate_launch_description():
         name = 'planner_server',
         executable = 'planner_server',
         parameters=[
-            {"map_frame"       : "map" }
+            {"map_frame"       : "map"},
             {"bypass_planning" : False},
             {"robot_diameter"  : 0.8},
             {"robot_height"    : 0.5}

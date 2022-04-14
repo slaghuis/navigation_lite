@@ -415,7 +415,7 @@ private:
     const rclcpp_action::GoalUUID & uuid,
     std::shared_ptr<const FollowWaypoints::Goal> goal)
   {
-    RCLCPP_INFO(this->get_logger(), "Received request to follow %d waypoints", goal->poses.size());
+    RCLCPP_INFO(this->get_logger(), "Controller Server received request to follow %d waypoints", goal->poses.size());
     (void)uuid;
     if(server_mutex.try_lock()) {
       return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
@@ -522,6 +522,7 @@ private:
   bool isPathClear(const float x, const float y, const float z)
   {
   
+    RCLCPP_INFO(this->get_logger(), "Controller Server is checking if path to [%.1f, %.1f, %.1f] is clear.", x, y, z);
     // Read the current position
     double cx, cy, cz, cw;
     read_position(&cx, &cy, &cz, &cw);  // From tf2
@@ -531,14 +532,18 @@ private:
     octomap::point3d direction(x-cx, y-cy, z-cz);
     octomap::point3d end_point(0,0,0);    
     double maxRange = sqrt( pow(x-cx,2) + pow(y-cy, 2) + pow(z-cz, 2) );   // Calculate the magnitude of the vector
-    
-    if (octomap_->castRay(origin, direction, end_point, true, maxRange) ) {
-      // An occupied node was hit at end_point
-      RCLCPP_DEBUG(this->get_logger(), "Path obstructed at %.2f,%.2f,%.2f", end_point.x(), end_point.y(), end_point.z());
+    if (octomap_) {
+      RCLCPP_INFO(this->get_logger(), "Casting ray");
+      if (octomap_->castRay(origin, direction, end_point, false, maxRange) ) {
+        // An occupied node was hit at end_point
+        RCLCPP_INFO(this->get_logger(), "Path obstructed at %.2f,%.2f,%.2f", end_point.x(), end_point.y(), end_point.z());
 
-      return false;
+        return false;
+      }
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "No map available.  Is the octomap server it broadcasting?");
     }
-    
+    RCLCPP_INFO(this->get_logger(), "Clear!");
     return true;  
   }
   

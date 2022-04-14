@@ -30,6 +30,15 @@ BT::NodeStatus NavLiteComputePathToPoseAction::tick()
       throw BT::RuntimeError("missing required input [pose]: ", 
                              msg.error() );
   }
+  
+  BT::Optional<std::string> planner = getInput<std::string>("planner");
+  // Check if optional is valid. If not, throw its error
+  if (!planner)
+  {
+      //throw BT::RuntimeError("missing required input [pose]: ", 
+      //                       msg.error() );
+      planner = "ThetaStarPlanner";  //Set as a default
+  }
 
   if (!this->client_ptr_->wait_for_action_server()) {
     RCLCPP_ERROR(node_->get_logger(), "Action server not available after waiting");
@@ -38,8 +47,11 @@ BT::NodeStatus NavLiteComputePathToPoseAction::tick()
   
   // Call the action server
   auto goal_msg = ComputePathToPose::Goal();
+  goal_msg.use_start = false;
+  goal_msg.planner_id = planner.value();
+  
   goal_msg.goal.header.stamp = node_->now();
-  goal_msg.goal.header.frame_id = "base_link";
+  goal_msg.goal.header.frame_id = "map";  
   goal_msg.goal.pose.position.x = msg.value().x;
   goal_msg.goal.pose.position.y = msg.value().y;
   goal_msg.goal.pose.position.z = msg.value().z;
@@ -109,7 +121,7 @@ void NavLiteComputePathToPoseAction::goal_response_callback(std::shared_future<G
       RCLCPP_ERROR(node_->get_logger(), "Goal was rejected by server");
       action_status = ActionStatus::REJECTED;
     } else {
-      RCLCPP_INFO(node_->get_logger(), "Goal accepted by server, Waiting for result");
+      RCLCPP_DEBUG(node_->get_logger(), "Goal accepted by server, Waiting for result");
       action_status = ActionStatus::PROCESSING;
     }
   }
@@ -124,6 +136,7 @@ void NavLiteComputePathToPoseAction::goal_response_callback(std::shared_future<G
           
           action_status = ActionStatus::FAILED;  // No path could be found.  SLAM is the only way out of this mess.
         } else {
+          RCLCPP_DEBUG(node_->get_logger(), "Navigation path calculated successfully.");
           
           // Build out the response.  x;y;z;theta float combinations seperated by |
           for(size_t i=0; i<result.result->path.poses.size(); i++) {
@@ -170,7 +183,6 @@ void NavLiteComputePathToPoseAction::goal_response_callback(std::shared_future<G
         return;
     }
     
-    RCLCPP_INFO(node_->get_logger(), "Navigation path completedsuccessfully.");
   }  
   
 }  // namespace
