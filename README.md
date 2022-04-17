@@ -18,10 +18,12 @@ Executes recovery actions.  Recivery action implimented are wait and spin.  Spin
 ## Planner Server
 Reads a Octree Map from the Map Server (external server using the [ROS2 Octomap Server](https://github.com/OctoMap/octomap_mapping) )and calculates a global flight plan.  Returns a sequence of waypoints for the Controller Server to follow. 
 
-This server uses plugins. It is important that you install a suitable plugin package.  See [Naviagtion Lite Theta Star Plugin](https://github.com/slaghuis/navigation_lite_theta_star_plugin) for a well coded Theta Star algoritm.  Other plugins are also available. 
+This server uses plugins. It is important that you install a suitable plugin package.  See Planner Plugins (https://github.com/slaghuis/planner_plugins) for a well coded Theta Star algoritm.  Other plugins are also available. 
 
 ## Dependancies
 This package needs a Octomap server [ROS2 Octomap Server](https://github.com/OctoMap/octomap_mapping).  The Octomap server needs sensor_msgs::msg::PointCloud publisher to build the map. (One could also load a static map, bat that is noo fun).  To asist, one could run the [Sensor PointCloud](https://github.com/slaghuis/sensor_pointcloud) package to read one or more range sensors, and publish the data in a point cloud.  One day someone will sponsor me a Intel Realsense camera for my drone.
+
+The planner server also requires a plugin to funciton.  See [Planner Plugins](https://github.com/slaghuis/planner_plugins)
 
 This package depend on the [Navigation Lite Interfaces](https://github.com/slaghuis/navigation_interfaces) for message definitions.
 
