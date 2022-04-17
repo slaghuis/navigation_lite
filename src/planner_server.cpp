@@ -12,10 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/* *************************************************************
+ * Deals with the interface to the navigation stack, and calls
+ * the statet plugin.  REQUIRES PLANNER PLUGINS to be installed
+ * *************************************************************
+
 #include <functional>
 #include <memory>
 #include <chrono>
-#include <string>
 #include <thread>
 
 #include "builtin_interfaces/msg/duration.hpp"
@@ -23,35 +27,35 @@
 #include "nav_msgs/msg/path.hpp"
 
 #include "navigation_interfaces/action/compute_path_to_pose.hpp"
-
-#include <rclcpp/rclcpp.hpp>
-#include <rclcpp_action/rclcpp_action.hpp>
-//#include "rclcpp_components/register_node_macro.hpp"
-
-#include <pluginlib/class_loader.hpp>
+#include "rclcpp/rclcpp.hpp"
+#include "rclcpp_action/rclcpp_action.hpp"
+#include "rclcpp_components/register_node_macro.hpp"
 
 #include <tf2_ros/buffer.h>
 #include <tf2/exceptions.h>
 #include <tf2_ros/transform_listener.h>
 
+#include "navigation_lite/visibility_control.h"
+
+#include <pluginlib/class_loader.hpp>
 #include <navigation_lite/regular_planner.hpp>
-#include <navigation_lite/visibility_control.h>
 
 #include <octomap/octomap.h>
 #include <octomap/OcTree.h>
 #include <octomap_msgs/conversions.h>
-#include "octomap_msgs/msg/octomap.hpp"
+#include <octomap_msgs/msg/octomap.hpp>
 
-using std::placeholders::_1;
-  
+namespace navigation_lite
+{
 class PlannerActionServer : public rclcpp::Node
 {
-public:  
+public:
   using ComputePathToPose = navigation_interfaces::action::ComputePathToPose;
   using GoalHandleComputePathToPose = rclcpp_action::ServerGoalHandle<ComputePathToPose>;
 
+  NAVIGATION_LITE_PUBLIC
   explicit PlannerActionServer(const rclcpp::NodeOptions & options = rclcpp::NodeOptions())
-  : Node("navigation_lite_planner_action_server", options), map_frame_("map")
+  : Node("planner_server", options), map_frame_("map")
   {
     using namespace std::placeholders;
     
@@ -63,13 +67,9 @@ public:
    // Subscribe to the map from the map server
    octomap_subscription_ = this->create_subscription<octomap_msgs::msg::Octomap>(
       "nav_lite/map", 10, std::bind(&PlannerActionServer::octomap_topic_callback, this, _1));
-    
-    // Create the action servers for path planning to a pose and through poses
+
     this->action_server_ = rclcpp_action::create_server<ComputePathToPose>(
-      this->get_node_base_interface(),
-      this->get_node_clock_interface(),
-      this->get_node_logging_interface(),
-      this->get_node_waitables_interface(),
+      this,
       "nav_lite/compute_path_to_pose",
       std::bind(&PlannerActionServer::handle_goal, this, _1, _2),
       std::bind(&PlannerActionServer::handle_cancel, this, _1),
@@ -89,7 +89,6 @@ private:
   {  
     std::string from_frame = "base_link_ned"; 
     std::string to_frame = map_frame_;
-//    std::string to_frame = map_frame_.c_str();
       
     geometry_msgs::msg::TransformStamped transformStamped;
     
@@ -119,7 +118,7 @@ private:
     }
     return true;
   }
-  
+
   // MAP SUBSCRIPTION ////////////////////////////////////////////////////////////////////////////////////////////////
   void octomap_topic_callback(const octomap_msgs::msg::Octomap::SharedPtr msg) 
   {
@@ -133,19 +132,21 @@ private:
   }
   rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr octomap_subscription_;
   
-  // PLANNER ACTION SERVER //////////////////////////////////////////////////////////////////////////////////////////
+  
+   // PLANNER ACTION SERVER //////////////////////////////////////////////////////////////////////////////////////////
 
   rclcpp_action::GoalResponse handle_goal(
     const rclcpp_action::GoalUUID & uuid,
     std::shared_ptr<const ComputePathToPose::Goal> goal)
   {
-    RCLCPP_DEBUG(this->get_logger(), "Received goal request for path to [%.2f;%.2f;%.2f]", goal->goal.pose.position.x, goal->goal.pose.position.y, goal->goal.pose.position.z);
+    RCLCPP_DEBUG(this->get_logger(), "Received goal request for path to [%.2f;%.2f;%.2f]", 
+      goal->goal.pose.position.x, 
+      goal->goal.pose.position.y, 
+      goal->goal.pose.position.z);
+      
     (void)uuid;
-    
-    // Let's reject sequences that are over 9000
-    //if (goal->order > 9000) {
-     // return rclcpp_action::GoalResponse::REJECT;
-    //}
+    // Consider rejecting goals that does not present in the "map" frame
+    // Alternatively, include a transform to the map frame.
     return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
   }
 
@@ -157,24 +158,49 @@ private:
     return rclcpp_action::CancelResponse::ACCEPT;
   }
 
+  void handle_accepted(const std::shared_ptr<GoalHandleComputePathToPose> goal_handle)
+  {
+    using namespace std::placeholders;
+    // this needs to return quickly to avoid blocking the executor, so spin up a new thread
+    std::thread{std::bind(&PlannerActionServer::execute, this, _1), goal_handle}.detach();
+  }
+
   void execute(const std::shared_ptr<GoalHandleComputePathToPose> goal_handle)
   {
+    
     RCLCPP_DEBUG(this->get_logger(), "Calculating path to pose");
-    //rclcpp::Rate loop_rate(1);
     const auto goal = goal_handle->get_goal();
     auto result = std::make_shared<ComputePathToPose::Result>();
 
     auto start_time = this->now();
     
-    pluginlib::ClassLoader<planner_base::RegularPlanner> planner_loader("planner_base", "planner_base::RegularPlanner");
-        
+    if (octomap_ == NULL) {
+      RCLCPP_INFO(this->get_logger(), "Waiting for the first map");
+    }
+    
+    // Wait for the fist map to arrive
+    rclcpp::Rate r(100);
+    while ( (octomap_ == NULL) && !goal_handle->is_canceling() ) {
+      r.sleep();
+    }
+    
+    if (goal_handle->is_canceling()) {
+      result->planning_time = this->now() - start_time;
+      goal_handle->canceled(result);
+      RCLCPP_INFO(this->get_logger(), "Goal canceled before the first map has been received!");
+      return;
+    }
+    pluginlib::ClassLoader<navigation_lite::RegularPlanner> planner_loader("navigation_lite", "navigation_lite::RegularPlanner");
+    
     try
     {
-      std::shared_ptr<planner_base::RegularPlanner> path_planner = planner_loader.createSharedInstance("planner_plugins::ThetaStarPlugin");
-      
+      std::string planner_base_name = "planner_plugins::";     
+      std::shared_ptr<navigation_lite::RegularPlanner> path_planner = planner_loader.createSharedInstance(planner_base_name.append( goal->planner_id ) );
+
       auto node_ptr = shared_from_this(); 
       path_planner->configure( node_ptr, "Planner", tf_buffer_, octomap_);
-      // # If false, use current robot pose as path start, if true, use start above instead
+
+      // If false, use current robot pose as path start, if true, use start above instead
       if(goal->use_start == true) {
         RCLCPP_DEBUG(this->get_logger(), "Planning a path from %.2f, %.2f, %.2f",
           goal->start.pose.position.x, 
@@ -185,8 +211,8 @@ private:
         // use the current robot position.
         geometry_msgs::msg::PoseStamped current_pos;
         if( !read_position(&current_pos) ) {   // From tf2
-          RCLCPP_ERROR(this->get_logger(), "Failed to read current position.  Cancelling the action.");
-          goal_handle->abort(result);
+          RCLCPP_ERROR(this->get_logger(), "Failed to read current position.  Aborting the action.");
+          goal_handle->abort(result);                // This crashes the server.  Why?  What alternatice is there?
         }
         RCLCPP_DEBUG(this->get_logger(), "Planning a path from %.2f, %.2f, %.2f",
           current_pos.pose.position.x, 
@@ -200,26 +226,19 @@ private:
         goal_handle->abort(result);
       }
     }
+    
     catch(pluginlib::PluginlibException& ex)
     {
-      printf("The plugin failed to load for some reason. Error: %s\n", ex.what());
+      RCLCPP_ERROR(this->get_logger(), "The plugin failed to load for some reason. Error: %s", ex.what());
     }
         
     // Check if goal is done
     if (rclcpp::ok()) {
       result->planning_time = this->now() - start_time;
       goal_handle->succeed(result);
-      RCLCPP_DEBUG(this->get_logger(), "Successfully claculated ath to pose");
+      RCLCPP_DEBUG(this->get_logger(), "Successfully calculated a path to the target pose");
     }
-  }
-
-  void handle_accepted(const std::shared_ptr<GoalHandleComputePathToPose> goal_handle)
-  {
-    using namespace std::placeholders;
-    // this needs to return quickly to avoid blocking the executor, so spin up a new thread
-    std::thread{std::bind(&PlannerActionServer::execute, this, _1), goal_handle}.detach();
-  }
-  
+  } 
   
   bool validate_path(
     const geometry_msgs::msg::PoseStamped & goal,
@@ -244,18 +263,40 @@ private:
     return true;  
     
   }
-  
-  
 };  // class PlannerActionServer
 
-int main(int argc, char ** argv)
+}  // namespace navigation_lite
+
+RCLCPP_COMPONENTS_REGISTER_NODE(navigation_lite::PlannerActionServer)
+
+/*
+
+
+int main(int argc, char** argv)
 {
-  rclcpp::init(argc, argv);
+  // To avoid unused parameter warnings
+  (void) argc;
+  (void) argv;
 
-  auto action_server = std::make_shared<PlannerActionServer>();
+  pluginlib::ClassLoader<navigation_lite::RegularPlanner> planner_loader("navigation_lite", "navigation_lite::RegularPlanner");
 
-  rclcpp::spin(action_server);
+  try
+  {
+    std::shared_ptr<navigation_lite::RegularPlanner> triangle = planner_loader.createSharedInstance("planner_plugins::NoPlan");
+    triangle->initialize(10.0);
 
-  rclcpp::shutdown();
+    std::shared_ptr<navigation_lite::RegularPlanner> square = planner_loader.createSharedInstance("planner_plugins::ThetaStar");
+    square->initialize(10.0);
+
+    printf("Triangle area: %.2f\n", triangle->area());
+    printf("Square area: %.2f\n", square->area());
+  }
+  catch(pluginlib::PluginlibException& ex)
+  {
+    printf("The plugin failed to load for some reason. Error: %s\n", ex.what());
+  }
+
   return 0;
 }
+
+*/

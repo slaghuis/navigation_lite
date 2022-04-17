@@ -1,5 +1,5 @@
-#ifndef REGULAR_PLANNNER_HPP
-#define REGULAR_PLANNNER_HPP
+#ifndef NAVIGATION_LITE_REGULAR_PLANNER_HPP
+#define NAVIGATION_LITE_REGULAR_PLANNER_HPP
 
 #include <string>              // std::string
 #include <rclcpp/rclcpp.hpp>
@@ -11,7 +11,7 @@
 #include <octomap/octomap.h>
 #include <octomap/OcTree.h>
 
-namespace planner_base
+namespace navigation_lite
 {
   class RegularPlanner
   {
@@ -19,16 +19,17 @@ namespace planner_base
       virtual void configure(const rclcpp::Node::SharedPtr parent, 
                              std::string name, std::shared_ptr<tf2_ros::Buffer> tf,
                              std::shared_ptr<octomap::OcTree> costmap ) = 0;
-      virtual void activate() = 0;
-      virtual void deactivate() = 0;
-      virtual void cleanup() = 0;
+    
       virtual nav_msgs::msg::Path createPlan( const geometry_msgs::msg::PoseStamped & start,
                                               const geometry_msgs::msg::PoseStamped & goal) = 0;
+    
+      virtual void initialize(double side_length) = 0;
+      virtual double area() = 0;
       virtual ~RegularPlanner(){}
 
     protected:
       RegularPlanner(){}
   };
-}  // namespace planner_base
+}  // namespace navigation_lite
 
-#endif  // REGULAR_PLANNNER_HPP
+#endif  // NAVIGATION_LITE_REGULAR_PLANNER_HPP

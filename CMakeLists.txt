@@ -95,13 +95,15 @@ ament_target_dependencies(controller_action_server
 
 rclcpp_components_register_node(controller_action_server PLUGIN "navigation_lite::ControllerServer" EXECUTABLE controller_server)
 
-add_executable(planner_server 
+add_library(planner_action_server SHARED
   src/planner_server.cpp)
-target_include_directories(planner_server PUBLIC
+target_include_directories(planner_action_server PRIVATE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_link_libraries(planner_server ${OCTOMAP_LIBRARIES})  
-ament_target_dependencies(planner_server
+target_link_libraries(planner_action_server ${OCTOMAP_LIBRARIES})   
+target_compile_definitions(planner_action_server
+  PRIVATE "NAVIGATION_LITE_BUILDING_DLL")
+ament_target_dependencies(planner_action_server
   "rclcpp"
   "rclcpp_action"
   "tf2"
@@ -112,6 +114,7 @@ ament_target_dependencies(planner_server
   "octomap_msgs"
   "nav_msgs"
   "geometry_msgs")
+rclcpp_components_register_node(planner_action_server PLUGIN "navigation_lite::PlannerActionServer" EXECUTABLE planner_server)
 
 add_library(coverage_planner_action_server SHARED
   src/coverage_planner_server.cpp)
@@ -160,20 +163,28 @@ ament_target_dependencies(recovery_action_server
   "drone_interfaces") 
 rclcpp_components_register_node(recovery_action_server PLUGIN "navigation_lite::RecoveryServer" EXECUTABLE recovery_server)
 
+
+install(
+  DIRECTORY include/
+  DESTINATION include
+)
+
 install(TARGETS
   navigation_action_server
+  planner_action_server
   controller_action_server
   recovery_action_server
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
-  
-install(TARGETS planner_server
-  DESTINATION lib/${PROJECT_NAME})
-  
+    
 install(DIRECTORY
   launch
   DESTINATION share/${PROJECT_NAME}
+)
+
+ament_export_include_directories(
+  include
 )
 
 ament_package()
