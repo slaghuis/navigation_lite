@@ -15,7 +15,7 @@
 /* *************************************************************
  * Deals with the interface to the navigation stack, and calls
  * the statet plugin.  REQUIRES PLANNER PLUGINS to be installed
- * *************************************************************
+ * *************************************************************/
 
 #include <functional>
 #include <memory>
