@@ -9,8 +9,9 @@ ros2 launch navigation_lite navigation_lite.launch.py
 Main interface waiting for messages nav_lite/navigate_to_pose to fly from point A to point B.  This uses a Behviour Tree to achieve the mission.  It is assumed that all the coordinates is in the map frame, NEU orientation, with angles in radians.  Coordinates are provided in the "map" frame.
 
 ## Controller Server
-Will move the drone along a collection of waypoints (typically the output of the planner server), using obstacle avoidance and a local planner. Obstacle avoidance is achieved by testing the path to the next waypoint against the latest published map.  The past has to be free space.  If the path is not free space, it implies that an obstacle has moved accros the path (and was detected by a sensor).  The acton server should then stop motion, and return unsuccessfull (A number of waypoints were not reached).
-The local planner in this node needs upgrading.  Current research suggests that Bezier points will be plotted through the provided waypoints to provide a smooth flight trajectory.  This is work in progress and the field of current research (14 April 2022)
+Will move the drone along a collection of waypoints (typically the output of the planner server), using obstacle avoidance and a local planner. Obstacle avoidance is achieved by testing the path to the next waypoint against the latest published map.  
+
+This server uses plugins. It is important that you install a suitable plugin package.  See [Controller Plugins] (https://github.com/slaghuis/controller_plugins).  
 
 ## Recovery Server
 Executes recovery actions.  Recivery action implimented are wait and spin.  Spin will rotate the drone at the current altitude a set arc.  Hopefully this gives the sensors time to inform the map server of any obstacles.  A wait recovery is also available.  This will maintain altitude and position for a set duration of time.  This might allow an obstacle (the dog for instance) to move along, and the sensors to detect a clear path again. Future recovery actions could inclue to change the altitude x meters.  
@@ -28,4 +29,4 @@ The planner server also requires a plugin to funciton.  See [Planner Plugins](ht
 This package depend on the [Navigation Lite Interfaces](https://github.com/slaghuis/navigation_interfaces) for message definitions.
 
 # Code Status
-This code has flown on a drone!  The drone was controlled by a Pixhawk mini 4.0 controlled via a Raspberry Pi 4 4Gb companion computer via UART.  This Navigation stack used the [drone_mavsdk](https://github.com/slaghuis/drone_mavsdk) node to effect the movement.  The mission was controlled via the [flight_control](https://github.com/slaghuis/flight_control) node.
+This code has not flown on a drone yet.  If you have to fly today, please use the main branch of this package! 
