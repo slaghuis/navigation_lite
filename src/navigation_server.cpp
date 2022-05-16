@@ -1,4 +1,4 @@
-// Copyright (c) 2021 Xeni Robotics
+// Copyright (c) 2021, 2022 Eric Slaghuis
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -50,7 +50,7 @@
 #include "navigation_lite/action_read_goal.h"
 #include "navigation_lite/action_wait.h"
 #include "navigation_lite/action_spin.h"
-#include "navigation_lite/action_follow_waypoints.h"
+#include "navigation_lite/action_follow_path.h"
 #include "navigation_lite/action_compute_path_to_pose.h"
 #include "navigation_lite/pose_3D.h"
 
@@ -194,7 +194,7 @@ private:
     factory.registerNodeType<NavLiteReadGoalAction>("ReadGoal");  //  10,0;1,0;5,0;0.0
     factory.registerNodeType<NavLiteWaitAction>("Wait");
     factory.registerNodeType<NavLiteSpinAction>("Spin");
-    factory.registerNodeType<NavLiteFollowWaypointsAction>("FollowWaypoints");
+    factory.registerNodeType<NavLiteFollowPathAction>("FollowPath");
     factory.registerNodeType<NavLiteComputePathToPoseAction>("ComputePathToPose");
 
     //BT::Blackboard::Ptr blackboard;
@@ -219,9 +219,9 @@ private:
       } else if( auto spin_action = dynamic_cast<NavLiteSpinAction *>( node.get() ))
       {
         spin_action->init( node_ptr );
-      } else if( auto follow_waypoints_action = dynamic_cast<NavLiteFollowWaypointsAction *>( node.get() ))
+      } else if( auto follow_path_action = dynamic_cast<NavLiteFollowPathAction *>( node.get() ))
       {
-        follow_waypoints_action->init( node_ptr );
+        follow_path_action->init( node_ptr );
       } else if( auto compute_path_to_pose_action = dynamic_cast<NavLiteComputePathToPoseAction *>( node.get() ))
       {
         compute_path_to_pose_action->init( node_ptr );

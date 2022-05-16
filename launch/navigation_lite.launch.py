@@ -39,15 +39,12 @@ def generate_launch_description():
         name = 'planner_server',
         executable = 'planner_server',
         parameters=[
-            {"map_frame"       : "map"},
-            {"bypass_planning" : False},
-            {"robot_diameter"  : 0.8},
-            {"robot_height"    : 0.5}
+            {"weight"       : "map"}
         ],    
         output="screen",
         emulate_tty=True
     )
-
+    
     recovery_server=Node(
         package = 'navigation_lite',
         name = 'recovery_server',

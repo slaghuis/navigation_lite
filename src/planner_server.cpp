@@ -212,7 +212,8 @@ private:
         geometry_msgs::msg::PoseStamped current_pos;
         if( !read_position(&current_pos) ) {   // From tf2
           RCLCPP_ERROR(this->get_logger(), "Failed to read current position.  Aborting the action.");
-          goal_handle->abort(result);                // This crashes the server.  Why?  What alternatice is there?
+          goal_handle->abort(result);      
+          return;
         }
         RCLCPP_DEBUG(this->get_logger(), "Planning a path from %.2f, %.2f, %.2f",
           current_pos.pose.position.x, 
@@ -224,6 +225,7 @@ private:
       if( !validate_path( goal->goal, result->path, goal->planner_id)) {
         // No valid goal was calculated
         goal_handle->abort(result);
+        return;
       }
     }
     

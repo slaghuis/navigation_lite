@@ -6,9 +6,9 @@ if(NOT CMAKE_C_STANDARD)
   set(CMAKE_C_STANDARD 99)
 endif()
 
-# Default to C++14
+# Default to C++17
 if(NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 14)
+  set(CMAKE_CXX_STANDARD 17)
 endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -40,7 +40,7 @@ add_library(navigation_action_server SHARED
   src/navigation_server.cpp
   src/action_wait.cpp
   src/action_spin.cpp
-  src/action_follow_waypoints.cpp
+  src/action_follow_path.cpp
   src/action_compute_path_to_pose.cpp
   src/action_read_goal.cpp
   src/control_recovery_node.cpp
@@ -73,9 +73,9 @@ add_library(controller_action_server SHARED
 target_include_directories(controller_action_server PRIVATE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
+target_link_libraries(controller_action_server ${OCTOMAP_LIBRARIES})   
 target_compile_definitions(controller_action_server
-  PRIVATE "NAVIGATION_LITE_BUILDING_DLL")
-target_link_libraries(controller_action_server ${OCTOMAP_LIBRARIES})    
+  PRIVATE "NAVIGATION_LITE_BUILDING_DLL")   
 ament_target_dependencies(controller_action_server
   "rclcpp"
   "rclcpp_action"
@@ -90,10 +90,11 @@ ament_target_dependencies(controller_action_server
   "tf2_geometry_msgs"
   "navigation_interfaces"
   "drone_interfaces"
+  "pluginlib"
   "octomap"
   "octomap_msgs")
 
-rclcpp_components_register_node(controller_action_server PLUGIN "navigation_lite::ControllerServer" EXECUTABLE controller_server)
+rclcpp_components_register_node(controller_action_server PLUGIN "navigation_lite::ControllerActionServer" EXECUTABLE controller_server)
 
 add_library(planner_action_server SHARED
   src/planner_server.cpp)
@@ -162,7 +163,6 @@ ament_target_dependencies(recovery_action_server
   "tf2_geometry_msgs"
   "drone_interfaces") 
 rclcpp_components_register_node(recovery_action_server PLUGIN "navigation_lite::RecoveryServer" EXECUTABLE recovery_server)
-
 
 install(
   DIRECTORY include/

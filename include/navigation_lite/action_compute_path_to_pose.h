@@ -51,6 +51,7 @@ class NavLiteComputePathToPoseAction : public BT::AsyncActionNode
     static BT::PortsList providedPorts()
     {
         return{ BT::InputPort<Pose3D>("pose"), 
+                BT::InputPort<std::string>("planner"),
                 BT::InputPort<Pose3D>("start"), 
                 BT::OutputPort<std::vector<Pose3D>>("path")};
         

@@ -35,9 +35,9 @@ BT::NodeStatus NavLiteComputePathToPoseAction::tick()
   // Check if optional is valid. If not, throw its error
   if (!planner)
   {
-      //throw BT::RuntimeError("missing required input [pose]: ", 
+      //throw BT::RuntimeError("missing required input [planner]: ", 
       //                       msg.error() );
-      planner = "ThetaStarPlanner";  //Set as a default
+      planner = "ThetaStar";  //Set as a default
   }
 
   if (!this->client_ptr_->wait_for_action_server()) {

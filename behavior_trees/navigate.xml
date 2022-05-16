@@ -6,9 +6,9 @@
                 <ReadGoal pose="{target_pose}" />
                 <PipelineSequence>
                     <Wait   seconds="2" />
-                    <ComputePathToPose pose="{target_pose}" path="{planned_path}" />
+                    <ComputePathToPose pose="{target_pose}" planner="NoPlan" path="{planned_path}" />
                 </PipelineSequence>    
-                <FollowWaypoints path="{planned_path}" />
+                <FollowPath path="{planned_path}" />
             </Sequence>
         </ReactiveSequence>    
      </BehaviorTree>

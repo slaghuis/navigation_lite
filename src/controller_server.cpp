@@ -1,4 +1,4 @@
-// Copyright (c) 2021 Xeni Robotics
+// Copyright (c) 2022 Eric Slaghuis
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,15 +16,11 @@
  * Subscribe to tf2 map->base_link for position and pose data
  * Subscribe to nav_lite/map [octomap_msgs::msg::Octomap] 
  *
- * Action Server responding to navgation_interfaces/action/FollowWaypoints
+ * Action Server responding to navgation_interfaces/action/FollowPath
  *   called only by the Navigation Server
  * Publishes cmd_vel as geometry_msgs/msg/Twist to effect motion.
- * The motion strategy would be:
- *   - Amend yaw, to point to the next waypoint
- *   - Increase foreward velocity to reach desitnation, using a PID 
- *       controller to govern speed
- *   - If an obstacle is encountered, stop movement and return a list of
- *     waypoints that have not been reached.
+ * The motion strategy would be determined by the specified PLUGIN.
+ * See available PLUGINS in the controller_plugins package
  *
  * A Mutex lock governs that only one action server can control the drone
  *  at a time.  Who knows what would happen if another node starts sending 
@@ -38,17 +34,16 @@
 #include <string>
 #include <thread>
 #include <limits>       // std::numeric_limits
+#include <cmath>        // std::hypot
 #include <mutex>
 
-#include "builtin_interfaces/msg/duration.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
-#include "nav_msgs/msg/path.hpp"
+#include <nav_msgs/msg/path.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 
-#include "navigation_interfaces/action/follow_waypoints.hpp"
-#include "navigation_interfaces/action/spin.hpp"
-#include "navigation_interfaces/action/wait.hpp"
+#include "navigation_interfaces/action/follow_path.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -65,17 +60,17 @@
 #include "octomap_msgs/msg/octomap.hpp"
 
 #include "navigation_lite/visibility_control.h"
-#include "navigation_lite/pid.hpp"
 #include "navigation_lite/holddown_timer.hpp"
+#include "navigation_lite/exceptions.hpp"
 
-static const float DEFAULT_MAX_SPEED_XY = 2.0;          // Maximum horizontal speed, in m/s
-static const float DEFAULT_MAX_ACCEL_XY = 0.2;          // Maximum horizontal acceleration, in m/s/s
-static const float DEFAULT_MAX_SPEED_Z = 0.33;          // Maximum vertical speed, in m/s
-static const float DEFAULT_MAX_YAW_SPEED = 0.5;         // Maximum yaw speed in radians/s 
+#include <pluginlib/class_loader.hpp>
+#include <navigation_lite/controller.hpp>
+
+const double PI  =3.141592653589793238463;
+
 static const float DEFAULT_WAYPOINT_RADIUS_ERROR = 0.3; // Acceptable XY distance to waypoint deemed as close enough
 static const float DEFAULT_YAW_THRESHOLD = 0.025;       // Acceptible YAW to start foreward acceleration
-static const float DEFAULT_ALTITUDE_THRESHOLD = 0.3;    // Acceptible Z distance to altitude deemed as close enough 
-static const int DEFAULT_HOLDDOWN = 2;                  // Time to ensure stability in flight is attained
+static const int DEFAULT_HOLDDOWN = 1;                  // Time to ensure stability in flight is attained
 
 inline double getDiff2Angles(const double x, const double y, const double c)
 {
@@ -87,36 +82,39 @@ inline double getDiff2Angles(const double x, const double y, const double c)
   return sign * r;                                           
 }
 
+using namespace std::chrono_literals;
+
 namespace navigation_lite
 {
-class ControllerServer : public rclcpp::Node
+class ControllerActionServer : public rclcpp::Node
 {
 public:
-  using FollowWaypoints = navigation_interfaces::action::FollowWaypoints;
-  using GoalHandleFollowWaypoints = rclcpp_action::ServerGoalHandle<FollowWaypoints>;
+  using FollowPath = navigation_interfaces::action::FollowPath;
+  using GoalHandleFollowPath = rclcpp_action::ServerGoalHandle<FollowPath>;
 
   NAVIGATION_LITE_PUBLIC
-  explicit ControllerServer(const rclcpp::NodeOptions & options = rclcpp::NodeOptions())
-  : Node("controller_server", options)
+  explicit ControllerActionServer(const rclcpp::NodeOptions & options = rclcpp::NodeOptions())
+  : Node("controller_server", options),
+    loader_("navigation_lite", "navigation_lite::Controller")
   {            
     one_off_timer_ = this->create_wall_timer(
-      1000ms, std::bind(&ControllerServer::init, this));
+      1000ms, std::bind(&ControllerActionServer::init, this));
   }
     
 private:    
-  std::mutex server_mutex;   // Only allow one Action Server to address the drone at a time
   
-  // Node Parameters
-  float max_yaw_speed_;
-  float max_speed_xy_;
-  float max_accel_xy_;
-  float max_speed_z_;
+  std::mutex server_mutex;   // Only allow one Action Server to address the drone at a time
+  pluginlib::ClassLoader<navigation_lite::Controller> loader_;
+  std::shared_ptr<navigation_lite::Controller> controller_;
+  
+  geometry_msgs::msg::Twist last_velocity_;
+  
+  geometry_msgs::msg::PoseStamped end_pose_;
+
   float waypoint_radius_error_;
   float yaw_threshold_;
-  float altitude_threshold_;
   int holddown_;
-  double freq_;
-  double yaw_control_limit_;
+  double controller_frequency_;
   
   // Clock
   rclcpp::Clock steady_clock_{RCL_STEADY_TIME};
@@ -124,270 +122,76 @@ private:
 
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr publisher_;
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
-  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::string map_frame_;
-  
-  // PID Controllers  
-  std::shared_ptr<PID> pid_x;
-  std::shared_ptr<PID> pid_y;
-  std::shared_ptr<PID> pid_z;
-  std::shared_ptr<PID> pid_yaw;
-  
-  // Holddown Timer
-  std::shared_ptr<HolddownTimer> holddown_timer;
+    
+  std::shared_ptr<HolddownTimer> holddown_timer_;
 
-  float robot_diameter_;
-  float robot_height_;
-  std::unique_ptr<octomap::OcTree> octomap_;
+  std::shared_ptr<octomap::OcTree> octomap_;
     
   void init() {
     using namespace std::placeholders;
     
     // Only run this once.  Stop the timer that triggered this.
     this->one_off_timer_->cancel();
-       
-    // Declare and get parameters    
-    freq_ = this->declare_parameter("frequency", 10.0);     // Control frequency in Hz.  Must be bigger than 2 Hz
     
-    max_speed_xy_ = this->declare_parameter<float>("max_speed_xy", DEFAULT_MAX_SPEED_XY);
-    max_accel_xy_ = this->declare_parameter<float>("max_accel_xy", DEFAULT_MAX_ACCEL_XY);
-    max_speed_z_= this->declare_parameter<float>("max_speed_z", DEFAULT_MAX_SPEED_Z);
-    max_yaw_speed_ = this->declare_parameter<float>("max_yaw_speed", DEFAULT_MAX_YAW_SPEED);
-  
-    waypoint_radius_error_ = this->declare_parameter<float>("waypoint_radius_error", DEFAULT_WAYPOINT_RADIUS_ERROR);
-    yaw_threshold_ = this->declare_parameter<float>("yaw_threshold", DEFAULT_YAW_THRESHOLD);
-    altitude_threshold_ = this->declare_parameter<float>("altitude_threshold", DEFAULT_ALTITUDE_THRESHOLD);
-    holddown_ = this->declare_parameter<int>("holddown", DEFAULT_HOLDDOWN);
-    
-    map_frame_ = this->declare_parameter<std::string>("map_frame", "map");
-    robot_diameter_ = this->declare_parameter<double>("drone_diameter", 0.80);   // 800 mm for my current craft.
-    robot_height_   = this->declare_parameter<double>("drone_height", 0.50);
-
-    // The grid size of the map is still hard coded, thus this is treated as a constant
-    yaw_control_limit_ = 1.0;   // Distance from waypoint where control moves to X and Y PID rather than Yaw and X 
-        
-    // Read the other parameters
-    this->declare_parameter("pid_xy", std::vector<double>{0.7, 0.0, 0.0});
-    rclcpp::Parameter pid_xy_settings_param = this->get_parameter("pid_xy");
-    std::vector<double> pid_xy_settings = pid_xy_settings_param.as_double_array(); 
-    pid_x   = std::make_shared<PID>(1.0 / freq_ , max_speed_xy_, -max_speed_xy_, (float)pid_xy_settings[0], (float)pid_xy_settings[1], (float)pid_xy_settings[2]);
-    pid_y   = std::make_shared<PID>(1.0 / freq_ , max_speed_xy_, -max_speed_xy_, (float)pid_xy_settings[0], (float)pid_xy_settings[1], (float)pid_xy_settings[2]);
-
-    this->declare_parameter("pid_z", std::vector<double>{0.7, 0.0, 0.0});
-    rclcpp::Parameter pid_z_settings_param = this->get_parameter("pid_z");
-    std::vector<double> pid_z_settings = pid_z_settings_param.as_double_array(); 
-    pid_z   = std::make_shared<PID>(1.0 / freq_, max_speed_z_, -max_speed_z_, (float)pid_z_settings[0], (float)pid_z_settings[1], (float)pid_z_settings[2]);
-
-    this->declare_parameter("pid_yaw", std::vector<double>{0.7, 0.0, 0.0});  
-    rclcpp::Parameter pid_yaw_settings_param = this->get_parameter("pid_yaw");
-    std::vector<double> pid_yaw_settings = pid_yaw_settings_param.as_double_array(); 
-    pid_yaw   = std::make_shared<PID>(1.0 / freq_, max_yaw_speed_, -max_yaw_speed_, (float)pid_yaw_settings[0], (float)pid_yaw_settings[1], (float)pid_yaw_settings[2]);
-
     // Create a transform listener
     tf_buffer_ =
-      std::make_unique<tf2_ros::Buffer>(this->get_clock());
+      std::make_shared<tf2_ros::Buffer>(this->get_clock());      
     transform_listener_ =
       std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-
-    // Set up the hoddown timer
-    holddown_timer = std::make_shared<HolddownTimer>(holddown_);
+    
+    // Declare and get parameters    
+    controller_frequency_ = this->declare_parameter("control_frequency", 10.0);     // Control frequency in Hz.  Must be bigger than 2 Hz
+    waypoint_radius_error_ = this->declare_parameter<float>("waypoint_radius_error", DEFAULT_WAYPOINT_RADIUS_ERROR);
+    yaw_threshold_ = this->declare_parameter<float>("yaw_threshold", DEFAULT_YAW_THRESHOLD);
+    holddown_ = this->declare_parameter<int>("holddown", DEFAULT_HOLDDOWN);
+    holddown_timer_ = std::make_shared<HolddownTimer>(holddown_);    
+    map_frame_ = this->declare_parameter<std::string>("map_frame", "map");
     
     // Create drone velocity publisher
     publisher_ =
       this->create_publisher<geometry_msgs::msg::Twist>("drone/cmd_vel", 1);
 
-    subscription_ = this->create_subscription<octomap_msgs::msg::Octomap>(
-      "nav_lite/map", 10, std::bind(&ControllerServer::topic_callback, this, _1));
-
+    // ROS2 Subscriptions
+    map_subscription_ = this->create_subscription<octomap_msgs::msg::Octomap>(
+      "nav_lite/map", 10, std::bind(&ControllerActionServer::map_callback, this, _1));
+      
+    odom_subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
+      "drone/odom", 10, std::bind(&ControllerActionServer::odom_callback, this, _1));
+  
     // Create the action server
-    this->action_server_ = rclcpp_action::create_server<FollowWaypoints>(
+    this->action_server_ = rclcpp_action::create_server<FollowPath>(
       this,
-      "nav_lite/follow_waypoints",
-      std::bind(&ControllerServer::handle_goal, this, _1, _2),
-      std::bind(&ControllerServer::handle_cancel, this, _1),
-      std::bind(&ControllerServer::handle_accepted, this, _1));
-    RCLCPP_INFO(this->get_logger(), "Action Server [nav_lite/follow_waypoints] started");    
+      "nav_lite/follow_path",
+      std::bind(&ControllerActionServer::handle_goal, this, _1, _2),
+      std::bind(&ControllerActionServer::handle_cancel, this, _1),
+      std::bind(&ControllerActionServer::handle_accepted, this, _1));
+      
+    RCLCPP_INFO(this->get_logger(), "Controller Action Server [nav_lite/follow_path] started");    
   }   
   
 // MAP SUBSCRIPTION ////////////////////////////////////////////////////////////////////////////////////////////////
-  void topic_callback(const octomap_msgs::msg::Octomap::SharedPtr msg) 
+  void map_callback(const octomap_msgs::msg::Octomap::SharedPtr msg) 
   {
     // Convert ROS message to a OctoMap
-    std::unique_ptr<octomap::AbstractOcTree> tree{octomap_msgs::msgToMap(*msg)};
+    octomap::AbstractOcTree* tree = octomap_msgs::msgToMap(*msg);
     if (tree) {
-      octomap_ = std::unique_ptr<octomap::OcTree>( dynamic_cast<octomap::OcTree *>(tree.release()));
-    }
-        
-    if (octomap_){ // can be NULL
-      RCLCPP_DEBUG(this->get_logger(), "Octree Conversion successfull.");
+      octomap_ = std::shared_ptr<octomap::OcTree>( dynamic_cast<octomap::OcTree *>(tree));
     } else {
-      RCLCPP_WARN(this->get_logger(), "Octree Conversion failed.");
-    }
+      RCLCPP_ERROR(this->get_logger(), "Error creating octree from received message");
+    } 
   }
-  rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr subscription_;
+  rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr map_subscription_;
   
+// ODOM SUBSCRIPTION ////////////////////////////////////////////////////////////////////////////////////////////////
+  void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg) 
+  {
+    last_velocity_ = msg->twist.twist;
+  }
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;
 
 // FLIGHT CONTROL ////////////////////////////////////////////////////////////////////////////////////////////////
-  bool fly_to_waypoint(geometry_msgs::msg::PoseStamped wp) {
-    rclcpp::Rate loop_rate( freq_ );
-
-    bool waypoint_is_close_, altitude_is_close_, pose_is_close_;
-    float target_x_, target_y_, target_z_;
-
-    target_x_ = wp.pose.position.x;
-    target_y_ = wp.pose.position.y;
-    target_z_ = wp.pose.position.z;
-   
-    geometry_msgs::msg::Twist setpoint = geometry_msgs::msg::Twist();
-    setpoint.linear.x = 0.0;
-    setpoint.linear.y = 0.0;
-    setpoint.linear.z = 0.0;
-    setpoint.angular.x = 0.0;
-    setpoint.angular.y = 0.0;
-    setpoint.angular.z = 0.0;
-
-    double x, y, z, w;
-    float err_x, err_y, err_z, err_dist;
-    double yaw_to_target;
-    double yaw_error;
-
-    // First correct the yaw        
-    pid_yaw->restart_control();
-
-    do {
-      read_position(&x, &y, &z, &w);  // Current position according to tf2
-
-      err_x = target_x_ - x; 
-      err_y = target_y_ - y;
-      
-      if ( sqrt(pow(err_x,2) + pow(err_y,2)) < yaw_control_limit_ ) {
-        break;
-      }
-      yaw_to_target = atan2(err_y, err_x);
-      
-      yaw_error = getDiff2Angles(yaw_to_target, w, M_PI);
-      pose_is_close_ = (fabs(yaw_error) < yaw_threshold_);
-      if (pose_is_close_) {
-        break;
-      }
-      setpoint.angular.z = pid_yaw->calculate(0, -yaw_error);         // correct yaw error down to zero  
-      
-      publisher_->publish(setpoint);
-      loop_rate.sleep();  // Give the drone time to move
-    } while (!pose_is_close_);  
-
-    // Now that we are ponting, keep on adjusting yaw, but include altitude and foreward velocity
-    pid_x->restart_control();
-    pid_y->restart_control();
-    pid_z->restart_control();
-    double last_v_x = 0.0;
-    double last_v_y = 0.0;
-    do {
-      read_position(&x, &y, &z, &w);  // Current position according to tf2
-
-      err_x = target_x_ - x; 
-      err_y = target_y_ - y;
-      err_z = target_z_ - z;
-
-      err_dist = sqrt(pow(err_x,2) + pow(err_y,2));        
-      waypoint_is_close_ = (err_dist < waypoint_radius_error_);
-
-      altitude_is_close_ = ( abs(err_z) < altitude_threshold_);
-      setpoint.linear.z = pid_z->calculate(0, -err_z);                // correct altitude
-      
-      if ( sqrt(pow(err_x,2) + pow(err_y,2)) < yaw_control_limit_ ) {
-        // Control via X and Y PID rather than yaw and thrust.
-        
-        setpoint.linear.x = pid_x->calculate(0, -err_x);              // fly
-        setpoint.linear.y = pid_y->calculate(0, -err_y);
-      } else {
-        // Control with yaw and thrust. 
-        yaw_to_target = atan2(err_y, err_x);      
-        yaw_error = getDiff2Angles(yaw_to_target, w, M_PI);
-        pose_is_close_ = (fabs(yaw_error) < yaw_threshold_);
-        
-        setpoint.angular.z = pid_yaw->calculate(0, -yaw_error);         // correct yaw error down to zero  
-        if( pose_is_close_ ) {
-          setpoint.linear.x = pid_x->calculate(0, -err_dist);              // fly
-        } else {
-          // Avoid flying in a doughnut.  First correct yaw.
-          setpoint.linear.x = 0.0;
-        }
-        setpoint.linear.y = 0.0;
-      }
-      
-      // Govern acceleration, and decellaration.  The latter should be governed by a well 
-      // tuned PID but then not all control is done via a PID.  Often velocity is forced
-      // to 0 which is an abrupt stop.
-      if (setpoint.linear.x > last_v_x ) {  // Acceleration
-        setpoint.linear.x = min(setpoint.linear.x, last_v_x + (max_accel_xy_ / freq_));
-      } else {                              // Decelleration
-        setpoint.linear.x = max(setpoint.linear.x, last_v_x - (max_accel_xy_ / freq_));
-      }
-      if (setpoint.linear.y > last_v_y ) {
-        setpoint.linear.y = min(setpoint.linear.y, last_v_y + (max_accel_xy_ / freq_));
-      } else {
-        setpoint.linear.y = max(setpoint.linear.y, last_v_y - (max_accel_xy_ / freq_));
-      }
-      last_v_x = setpoint.linear.x;
-      last_v_y = setpoint.linear.y;
-      
-      publisher_->publish(setpoint);
-      loop_rate.sleep();  // Give the drone time to move
-    }  while (!(waypoint_is_close_ && altitude_is_close_)); 
-    
-    return true;
-  }
-  
-  bool correct_yaw(geometry_msgs::msg::PoseStamped wp) {
-  
-    rclcpp::Rate loop_rate(2);
-    
-    // Orientation quaternion
-    tf2::Quaternion q(
-        wp.pose.orientation.x,
-        wp.pose.orientation.y,
-        wp.pose.orientation.z,
-        wp.pose.orientation.w);
-        
-    // 3x3 Rotation matrix from quaternion
-    tf2::Matrix3x3 m(q);
-
-    // Roll Pitch and Yaw from rotation matrix
-    double roll, pitch, yaw; 
-    m.getRPY(roll, pitch, yaw);
-         
-    bool  pose_is_close_;
-    
-    geometry_msgs::msg::Twist setpoint = geometry_msgs::msg::Twist();
-    setpoint.linear.x = 0.0;
-    setpoint.linear.y = 0.0;
-    setpoint.linear.z = 0.0;
-    setpoint.angular.x = 0.0;
-    setpoint.angular.y = 0.0;
-    setpoint.angular.z = 0.0;
-
-    double x, y, z, w;
-    double yaw_error;
-      
-    pid_yaw->restart_control();
-
-    do {
-      read_position(&x, &y, &z, &w);  
-      
-      yaw_error = getDiff2Angles(yaw, w, M_PI);
-      pose_is_close_ = (fabs(yaw_error) < yaw_threshold_);
-      if (pose_is_close_) {
-        break;
-      }
-      setpoint.angular.z = pid_yaw->calculate(0, -yaw_error);         // correct yaw error down to zero  
-      
-      publisher_->publish(setpoint);
-      loop_rate.sleep();  // Give the drone time to move
-    } while (!pose_is_close_); 
-    
-    return true;
-  }
 
   bool stop_movement() {
     rclcpp::Rate loop_rate(2);
@@ -410,13 +214,18 @@ private:
   }
   
 // FollowWayPoint Action Server /////////////////////////////////////////////////////////////////
-  rclcpp_action::Server<FollowWaypoints>::SharedPtr action_server_;
+  rclcpp_action::Server<FollowPath>::SharedPtr action_server_;
   rclcpp_action::GoalResponse handle_goal(
     const rclcpp_action::GoalUUID & uuid,
-    std::shared_ptr<const FollowWaypoints::Goal> goal)
+    std::shared_ptr<const FollowPath::Goal> goal)
   {
-    RCLCPP_INFO(this->get_logger(), "Controller Server received request to follow %d waypoints", goal->poses.size());
     (void)uuid;
+    if(goal->path.poses.empty()) {
+      RCLCPP_ERROR(this->get_logger(), "Invalid path, Path is empty.  Rejecting request.");
+      return rclcpp_action::GoalResponse::REJECT; 
+    }
+    RCLCPP_INFO(this->get_logger(), "Controller Server received request to follow %d waypoints", goal->path.poses.size());
+    
     if(server_mutex.try_lock()) {
       return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
     } else {
@@ -426,127 +235,166 @@ private:
   }
 
   rclcpp_action::CancelResponse handle_cancel(
-    const std::shared_ptr<GoalHandleFollowWaypoints> goal_handle)
+    const std::shared_ptr<GoalHandleFollowPath> goal_handle)
   {
     RCLCPP_INFO(this->get_logger(), "Received request to cancel goal");
     (void)goal_handle;
     return rclcpp_action::CancelResponse::ACCEPT;
   }
 
-  void handle_accepted(const std::shared_ptr<GoalHandleFollowWaypoints> goal_handle)
+  void handle_accepted(const std::shared_ptr<GoalHandleFollowPath> goal_handle)
   {
     using namespace std::placeholders;
     // this needs to return quickly to avoid blocking the executor, so spin up a new thread
-    std::thread{std::bind(&ControllerServer::execute, this, _1), goal_handle}.detach();
+    std::thread{std::bind(&ControllerActionServer::execute, this, _1), goal_handle}.detach();
   }
 
-  void execute(const std::shared_ptr<GoalHandleFollowWaypoints> goal_handle)
+  void execute(const std::shared_ptr<GoalHandleFollowPath> goal_handle)
   {
     const auto goal = goal_handle->get_goal();
-    auto feedback = std::make_shared<FollowWaypoints::Feedback>();
-    auto & current_waypoint = feedback->current_waypoint;
-    auto result = std::make_shared<FollowWaypoints::Result>();
-              
-    current_waypoint = 0;
-    unsigned int last_reached_waypoint = std::numeric_limits<unsigned int>::max();
+    auto feedback = std::make_shared<FollowPath::Feedback>();
+    auto & distance_to_goal = feedback->distance_to_goal;
+    auto & speed = feedback->speed;
+    auto result = std::make_shared<FollowPath::Result>();
     
-    // Start at the goal, and search through all the waypoints till the first one that I can fly
-    // to without an obstacle.  If nothing is found, fail gracefully back.  If one is found, fly 
-    // straight to it, without going through all the other waypoints.
-    while ( (current_waypoint < goal->poses.size()) && (rclcpp::ok()) ) {
-          
-      // Check if there is a cancel request
-      if (goal_handle->is_canceling()) {
-        for( size_t i = current_waypoint; i < goal->poses.size(); i++) {        
-          result->missed_waypoints.push_back(i);
+    RCLCPP_INFO(this->get_logger(), "CONTROL EFFORT STARTED");    
+
+    auto start_time = this->now();
+    end_pose_ = goal->path.poses.back();
+    if (octomap_ == NULL) {
+      RCLCPP_INFO(this->get_logger(), "Waiting for the first map");
+    }
+    
+    // Wait for the fist map to arrive
+    rclcpp::Rate r(100);
+    while ( (octomap_ == NULL) && !goal_handle->is_canceling() ) {
+      r.sleep();
+    }
+    
+    if (goal_handle->is_canceling()) {
+      // result->planning_time = this->now() - start_time;
+      goal_handle->canceled(result);
+      RCLCPP_INFO(this->get_logger(), "Goal canceled before the first map has been received!");
+      return;
+    }
+    
+    try
+    {
+      controller_ = loader_.createSharedInstance(goal->controller_id);  //"controller_plugins::PurePursuitController"      
+      auto node_ptr = shared_from_this(); 
+      controller_->configure(node_ptr, goal->controller_id, tf_buffer_, octomap_);
+      controller_->setPath( goal->path );
+            
+      rclcpp::Rate loop_rate( controller_frequency_ );
+      while ( rclcpp::ok() ) {
+        // Check if there is a cancelling request
+        if (goal_handle->is_canceling()) {
+          goal_handle->canceled(result);
+          RCLCPP_INFO(this->get_logger(), "Goal canceled");
+          stop_movement();
+          server_mutex.unlock();
+          return;
         }
-        goal_handle->canceled(result);
-        RCLCPP_INFO(this->get_logger(), "Goal canceled");
-        stop_movement();
-        server_mutex.unlock();
-        return;
-      }
-      
-      // Optimistically search for a next waypoint that has a clear path from the current position
-      unsigned int proposed_waypoint;
-      bool found_valid_path = false;
-      for( size_t i = current_waypoint; i < goal->poses.size(); i++) {
-        geometry_msgs::msg::PoseStamped wp = goal->poses[i];
-      
-        if (isPathClear(wp.pose.position.x,
-                        wp.pose.position.y,
-                        wp.pose.position.z)) {
-           found_valid_path = true;
-           proposed_waypoint = i;
-        } else {
-          break;   // Found an obstacle, no need to search further.
+        
+        // Compute and publish velocity
+        geometry_msgs::msg::PoseStamped pose;    
+        if (!read_position(pose)) {
+          throw ControllerException("Failed to obtain robot pose.");
+        }
+        
+        // Check if the robot is stuck here (for longer than a timeout)
+        
+        try {
+          geometry_msgs::msg::TwistStamped setpoint;
+          setpoint = controller_->computeVelocityCommands( pose, last_velocity_);      
+          RCLCPP_INFO(this->get_logger(), "Publishing velocity [%.2f, %.2f, %.2f, %.2f]", 
+            setpoint.twist.linear.x, 
+            setpoint.twist.linear.y, 
+            setpoint.twist.linear.z,
+            setpoint.twist.angular.z);
+          publisher_->publish( setpoint.twist ); 
+
+          // Publish feedback
+          speed = std::hypot( double(last_velocity_.linear.x), double(last_velocity_.linear.y), double(last_velocity_.linear.z) );
+          size_t current_idx = find_closest_goal_idx( pose, goal->path); 
+          distance_to_goal = calculate_path_length( goal->path, current_idx );
+          goal_handle->publish_feedback(feedback);
+        } catch (ControllerException & e) {
+          RCLCPP_WARN(this->get_logger(), e.what());
+        }
+        
+        if (is_goal_reached()) {
+          break;
         }  
-      }
-      if (found_valid_path) {
-        current_waypoint = proposed_waypoint;    
-      } else {
-        // I have nowhere to fly to.  Stop flying.
-        break;
-      }
-      
-      if (fly_to_waypoint( goal->poses[current_waypoint] ) ) {
-        last_reached_waypoint = current_waypoint;
-      }
-      
-      current_waypoint++; 
-    }  
-    
-    if (rclcpp::ok() ) { 
-      if (last_reached_waypoint == ( goal->poses.size() - 1) ) {
-        // Mission complete.  Turn the drone to the pose offered by the final waypoint
-        correct_yaw(goal->poses.back());
-      } else {
-        //  Missed some goals, hence the route failed. (Could not find a clear path to next waypoint)
-        for(size_t i = last_reached_waypoint + 1; i < goal->poses.size(); i++) {        
-          result->missed_waypoints.push_back(i);
+                                
+        if (!loop_rate.sleep()) {
+          RCLCPP_WARN(
+            get_logger(), "Control loop missed its desired rate of %.4fHz",
+            controller_frequency_);
         }
       }
-                 
-      stop_movement();
       
-      goal_handle->succeed(result);
-    }
-    
-    server_mutex.unlock();
-    RCLCPP_DEBUG(this->get_logger(), "ACTION EXECUTION COMPLETE");
-  }
-
-
-
-  // Quary the octomap to see if there is clear line of sight to the given coordinates
-  bool isPathClear(const float x, const float y, const float z)
-  {
-  
-    RCLCPP_INFO(this->get_logger(), "Controller Server is checking if path to [%.1f, %.1f, %.1f] is clear.", x, y, z);
-    // Read the current position
-    double cx, cy, cz, cw;
-    read_position(&cx, &cy, &cz, &cw);  // From tf2
-    
-    // Cast a ray to the target position to see if any obstructions have appeared
-    octomap::point3d origin(cx, cy, cz);
-    octomap::point3d direction(x-cx, y-cy, z-cz);
-    octomap::point3d end_point(0,0,0);    
-    double maxRange = sqrt( pow(x-cx,2) + pow(y-cy, 2) + pow(z-cz, 2) );   // Calculate the magnitude of the vector
-    if (octomap_) {
-      RCLCPP_INFO(this->get_logger(), "Casting ray");
-      if (octomap_->castRay(origin, direction, end_point, false, maxRange) ) {
-        // An occupied node was hit at end_point
-        RCLCPP_INFO(this->get_logger(), "Path obstructed at %.2f,%.2f,%.2f", end_point.x(), end_point.y(), end_point.z());
-
-        return false;
+      stop_movement();      
+      if (rclcpp::ok() ) { 
+        goal_handle->succeed(result);
       }
-    } else {
-      RCLCPP_ERROR(this->get_logger(), "No map available.  Is the octomap server it broadcasting?");
+      stop_movement();
+
+    
     }
-    RCLCPP_INFO(this->get_logger(), "Clear!");
-    return true;  
+    catch(pluginlib::PluginlibException& ex)
+    {
+      RCLCPP_ERROR(this->get_logger(), "The controller plugin failed to load for some reason: %s", ex.what());
+      goal_handle->abort(result);      
+      server_mutex.unlock();
+      return;
+    }
+    catch(ControllerException& ex)
+    {
+      RCLCPP_ERROR(this->get_logger(), "The controller threw an exception: %s", ex.what());
+      goal_handle->abort(result);
+      server_mutex.unlock();
+      return;
+    }
+        
+    server_mutex.unlock();
+    RCLCPP_INFO(this->get_logger(), "CONTROLER ACTION EXECUTION COMPLETE");
   }
-  
+
+  bool read_position(geometry_msgs::msg::PoseStamped & pose)
+  {
+    std::string from_frame = "base_link_ned"; //map_frame_.c_str();
+    std::string to_frame = "map";
+    
+    geometry_msgs::msg::TransformStamped transformStamped;
+    
+    // Look up for the transformation between map and base_link frames
+    // and save the last position in the 'map' frame
+    try {
+      transformStamped = tf_buffer_->lookupTransform(
+        to_frame, from_frame,
+        tf2::TimePointZero);
+        pose.header.frame_id = to_frame;
+        pose.pose.position.x = transformStamped.transform.translation.x;
+        pose.pose.position.y = transformStamped.transform.translation.y;
+        pose.pose.position.z = transformStamped.transform.translation.z;
+        
+        pose.pose.orientation.x = transformStamped.transform.rotation.x;
+        pose.pose.orientation.y = transformStamped.transform.rotation.y;
+        pose.pose.orientation.z = transformStamped.transform.rotation.z;
+        pose.pose.orientation.w = transformStamped.transform.rotation.w;
+        
+    } catch (tf2::TransformException & ex) {
+      RCLCPP_DEBUG(
+        this->get_logger(), "Could not transform %s to %s: %s",
+        to_frame.c_str(), from_frame.c_str(), ex.what());
+      return false;  
+    }
+    
+    return true;
+
+  }
+    
   bool read_position(double *x, double *y, double *z, double *w)
   {
     std::string from_frame = "base_link_ned"; //map_frame_.c_str();
@@ -588,8 +436,73 @@ private:
     return true;
   }
   
-};  // class ControllerServer
+  double get_yaw(geometry_msgs::msg::Quaternion quaternion)
+  {
+    // Orientation quaternion
+    tf2::Quaternion q(
+        quaternion.x,
+        quaternion.y,
+        quaternion.z,
+        quaternion.w);
+
+    // 3x3 Rotation matrix from quaternion
+    tf2::Matrix3x3 m(q);
+
+    // Roll Pitch and Yaw from rotation matrix
+    double roll, pitch, yaw; 
+    m.getRPY(roll, pitch, yaw);
+    
+    return yaw;
+  }
+
+  double euclidean_distance(geometry_msgs::msg::PoseStamped start, geometry_msgs::msg::PoseStamped end)
+  {
+    // for some reason std::hypot(double, double, double) cannot be used, wven with c++17  
+    return std::sqrt(
+      pow(end.pose.position.x - start.pose.position.x,2) +
+      pow(end.pose.position.y - start.pose.position.y,2) +
+      pow(end.pose.position.z - start.pose.position.z,2) );
+      
+  }
+  
+  bool is_goal_reached() {
+    geometry_msgs::msg::PoseStamped pose;
+    
+    read_position(pose);    
+    double position_error = euclidean_distance(pose, end_pose_);      
+    double yaw_error = getDiff2Angles( get_yaw(pose.pose.orientation), get_yaw(end_pose_.pose.orientation), PI);  
+      
+    return holddown_timer_->test( (position_error < waypoint_radius_error_ ) &&
+                                  ( yaw_error < yaw_threshold_)  );        
+  }
+  
+  size_t find_closest_goal_idx(geometry_msgs::msg::PoseStamped pose, nav_msgs::msg::Path path)
+  {
+    size_t closest_pose_idx = 0;
+    double curr_min_dist = std::numeric_limits<double>::max();
+    
+    for (size_t curr_idx = 0; curr_idx < path.poses.size(); ++curr_idx) {
+      double curr_dist = euclidean_distance( pose, path.poses[curr_idx]);
+      if (curr_dist < curr_min_dist) {
+        curr_min_dist = curr_dist;
+        closest_pose_idx = curr_idx;
+      }
+    }
+    return closest_pose_idx;
+  }  
+  
+  double calculate_path_length( const nav_msgs::msg::Path path, const size_t current_idx ) 
+  {
+    double distance = 0.0;
+    for(size_t i = current_idx; i < path.poses.size()-1; i++) {
+      distance += euclidean_distance( path.poses[i], path.poses[i+1] );
+    }
+    
+    return distance;
+  }
+  
+};  // class ControllerActionServer
 
 }  // namespace navigation_lite
 
-RCLCPP_COMPONENTS_REGISTER_NODE(navigation_lite::ControllerServer)
+RCLCPP_COMPONENTS_REGISTER_NODE(navigation_lite::ControllerActionServer)
