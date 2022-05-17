@@ -168,7 +168,7 @@ private:
   void execute(const std::shared_ptr<GoalHandleComputePathToPose> goal_handle)
   {
     
-    RCLCPP_DEBUG(this->get_logger(), "Calculating path to pose");
+    RCLCPP_DEBUG(this->get_logger(), "Planner server is calculating a path to pose");
     const auto goal = goal_handle->get_goal();
     auto result = std::make_shared<ComputePathToPose::Result>();
 
@@ -198,7 +198,7 @@ private:
       std::shared_ptr<navigation_lite::RegularPlanner> path_planner = planner_loader.createSharedInstance(planner_base_name.append( goal->planner_id ) );
 
       auto node_ptr = shared_from_this(); 
-      path_planner->configure( node_ptr, "Planner", tf_buffer_, octomap_);
+      path_planner->configure( node_ptr, goal->planner_id, tf_buffer_, octomap_);
 
       // If false, use current robot pose as path start, if true, use start above instead
       if(goal->use_start == true) {
@@ -238,7 +238,7 @@ private:
     if (rclcpp::ok()) {
       result->planning_time = this->now() - start_time;
       goal_handle->succeed(result);
-      RCLCPP_DEBUG(this->get_logger(), "Successfully calculated a path to the target pose");
+      RCLCPP_DEBUG(this->get_logger(), "Successfully calculated a path to the target pose in %d ns", result->planning_time.nanosec);
     }
   } 
   
@@ -270,35 +270,3 @@ private:
 }  // namespace navigation_lite
 
 RCLCPP_COMPONENTS_REGISTER_NODE(navigation_lite::PlannerActionServer)
-
-/*
-
-
-int main(int argc, char** argv)
-{
-  // To avoid unused parameter warnings
-  (void) argc;
-  (void) argv;
-
-  pluginlib::ClassLoader<navigation_lite::RegularPlanner> planner_loader("navigation_lite", "navigation_lite::RegularPlanner");
-
-  try
-  {
-    std::shared_ptr<navigation_lite::RegularPlanner> triangle = planner_loader.createSharedInstance("planner_plugins::NoPlan");
-    triangle->initialize(10.0);
-
-    std::shared_ptr<navigation_lite::RegularPlanner> square = planner_loader.createSharedInstance("planner_plugins::ThetaStar");
-    square->initialize(10.0);
-
-    printf("Triangle area: %.2f\n", triangle->area());
-    printf("Square area: %.2f\n", square->area());
-  }
-  catch(pluginlib::PluginlibException& ex)
-  {
-    printf("The plugin failed to load for some reason. Error: %s\n", ex.what());
-  }
-
-  return 0;
-}
-
-*/

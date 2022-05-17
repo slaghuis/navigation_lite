@@ -257,8 +257,6 @@ private:
     auto & speed = feedback->speed;
     auto result = std::make_shared<FollowPath::Result>();
     
-    RCLCPP_INFO(this->get_logger(), "CONTROL EFFORT STARTED");    
-
     auto start_time = this->now();
     end_pose_ = goal->path.poses.back();
     if (octomap_ == NULL) {
@@ -280,7 +278,8 @@ private:
     
     try
     {
-      controller_ = loader_.createSharedInstance(goal->controller_id);  //"controller_plugins::PurePursuitController"      
+      std::string controller_base_name = "controller_plugins::"; 
+      controller_ = loader_.createSharedInstance(controller_base_name.append( goal->controller_id ));  //"controller_plugins::PurePursuitController"
       auto node_ptr = shared_from_this(); 
       controller_->configure(node_ptr, goal->controller_id, tf_buffer_, octomap_);
       controller_->setPath( goal->path );
@@ -307,7 +306,7 @@ private:
         try {
           geometry_msgs::msg::TwistStamped setpoint;
           setpoint = controller_->computeVelocityCommands( pose, last_velocity_);      
-          RCLCPP_INFO(this->get_logger(), "Publishing velocity [%.2f, %.2f, %.2f, %.2f]", 
+          RCLCPP_INFO(this->get_logger(), "Publishing velocity [%.2f, %.2f, %.2f, %.4f]", 
             setpoint.twist.linear.x, 
             setpoint.twist.linear.y, 
             setpoint.twist.linear.z,
@@ -358,7 +357,6 @@ private:
     }
         
     server_mutex.unlock();
-    RCLCPP_INFO(this->get_logger(), "CONTROLER ACTION EXECUTION COMPLETE");
   }
 
   bool read_position(geometry_msgs::msg::PoseStamped & pose)

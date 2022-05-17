@@ -45,7 +45,8 @@ class NavLiteFollowPathAction : public BT::AsyncActionNode
     
     static BT::PortsList providedPorts()
     {
-        return{ BT::InputPort<std::vector<Pose3D>>("path") };
+        return{ BT::InputPort<std::vector<Pose3D>>("path"),
+                BT::InputPort<std::string>("controller") };
     }
     
     BT::NodeStatus tick() override;

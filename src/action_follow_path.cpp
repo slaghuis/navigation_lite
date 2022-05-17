@@ -35,7 +35,7 @@ BT::NodeStatus NavLiteFollowPathAction::tick()
   
   if (!controller)
   {
-    controller = "controller_plugins::PurePursuitController";
+    controller = "PurePursuitController";
   }
   
 
