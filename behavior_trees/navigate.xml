@@ -8,7 +8,7 @@
                     <Wait   seconds="2" />
                     <ComputePathToPose pose="{target_pose}" planner="ThetaStar" path="{planned_path}" />
                 </PipelineSequence>    
-                <FollowPath path="{planned_path}" controller="PurePursuitController" />
+                <FollowPath path="{planned_path}" controller="VhfPlusController" />
             </Sequence>
         </ReactiveSequence>    
      </BehaviorTree>

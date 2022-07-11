@@ -45,11 +45,14 @@ BT::NodeStatus NavLiteFollowPathAction::tick()
   }
   
   // Call the action server
+  auto now = node_->get_clock()->now();
   auto goal_msg = FollowPath::Goal();
   goal_msg.controller_id = controller.value();  
+  goal_msg.path.header.stamp = now;
+  goal_msg.path.header.frame_id = "map";  
   for(size_t i = 0; i < msg.value().size(); i++) {
     geometry_msgs::msg::PoseStamped pose;
-    pose.header.stamp = node_->get_clock()->now();
+    pose.header.stamp = now;
     pose.header.frame_id = "map";
     pose.pose.position.x = msg.value()[i].x;
     pose.pose.position.y = msg.value()[i].y;

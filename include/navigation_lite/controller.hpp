@@ -3,8 +3,10 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <tf2_ros/buffer.h>
+#include "tf2_geometry_msgs/tf2_geometry_msgs.h"
 
 #include "geometry_msgs/msg/pose.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "nav_msgs/msg/path.hpp"

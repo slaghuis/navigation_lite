@@ -72,14 +72,18 @@ static const float DEFAULT_WAYPOINT_RADIUS_ERROR = 0.3; // Acceptable XY distanc
 static const float DEFAULT_YAW_THRESHOLD = 0.025;       // Acceptible YAW to start foreward acceleration
 static const int DEFAULT_HOLDDOWN = 1;                  // Time to ensure stability in flight is attained
 
+// In C the modulo operation returns a value with the same sign as the dividend.
+// Hence a custom modulo function
+inline double modulo(const double a, const double n) {
+  return a - floor(a/n) * n;
+}
+
+// Returns the difference between two angles x and y as a number 
+// between -180 and 180.  c can be PI for radians, or 180 for degrees. 
 inline double getDiff2Angles(const double x, const double y, const double c)
 {
-  // c can be PI (for radians) or 180.0 (for degrees);
-  double d =  fabs(fmod(fabs(x - y), 2*c));
-  double r = d > c ? c*2 - d : d;
-  
-  double sign = ((x-y >= 0.0) && (x-y <= c)) || ((x-y <= -c) && (x-y> -2*c)) ? 1.0 : -1.0;
-  return sign * r;                                           
+  double a = x-y;
+  return modulo( a+c, 2*c) - c;
 }
 
 using namespace std::chrono_literals;
@@ -361,8 +365,8 @@ private:
 
   bool read_position(geometry_msgs::msg::PoseStamped & pose)
   {
-    std::string from_frame = "base_link_ned"; //map_frame_.c_str();
-    std::string to_frame = "map";
+    std::string target_frame = "base_link";
+    std::string reference_frame = "map";
     
     geometry_msgs::msg::TransformStamped transformStamped;
     
@@ -370,9 +374,10 @@ private:
     // and save the last position in the 'map' frame
     try {
       transformStamped = tf_buffer_->lookupTransform(
-        to_frame, from_frame,
+        reference_frame, target_frame,
         tf2::TimePointZero);
-        pose.header.frame_id = to_frame;
+        pose.header.frame_id = reference_frame;
+        pose.header.stamp = transformStamped.header.stamp;
         pose.pose.position.x = transformStamped.transform.translation.x;
         pose.pose.position.y = transformStamped.transform.translation.y;
         pose.pose.position.z = transformStamped.transform.translation.z;
@@ -385,7 +390,7 @@ private:
     } catch (tf2::TransformException & ex) {
       RCLCPP_DEBUG(
         this->get_logger(), "Could not transform %s to %s: %s",
-        to_frame.c_str(), from_frame.c_str(), ex.what());
+        reference_frame.c_str(), target_frame.c_str(), ex.what());
       return false;  
     }
     
@@ -395,8 +400,8 @@ private:
     
   bool read_position(double *x, double *y, double *z, double *w)
   {
-    std::string from_frame = "base_link_ned"; //map_frame_.c_str();
-    std::string to_frame = "map";
+    std::string target_frame = "base_link";
+    std::string reference_frame = "map";
     
     geometry_msgs::msg::TransformStamped transformStamped;
     
@@ -404,7 +409,7 @@ private:
     // and save the last position in the 'map' frame
     try {
       transformStamped = tf_buffer_->lookupTransform(
-        to_frame, from_frame,
+        reference_frame, target_frame,
         tf2::TimePointZero);
         *x = transformStamped.transform.translation.x;
         *y = transformStamped.transform.translation.y;
@@ -412,25 +417,11 @@ private:
     } catch (tf2::TransformException & ex) {
       RCLCPP_DEBUG(
         this->get_logger(), "Could not transform %s to %s: %s",
-        to_frame.c_str(), from_frame.c_str(), ex.what());
+        reference_frame.c_str(), target_frame.c_str(), ex.what());
       return false;  
     }
+    *w = get_yaw(transformStamped.transform.rotation);
     
-    // Orientation quaternion
-    tf2::Quaternion q(
-        transformStamped.transform.rotation.x,
-        transformStamped.transform.rotation.y,
-        transformStamped.transform.rotation.z,
-        transformStamped.transform.rotation.w);
-
-    // 3x3 Rotation matrix from quaternion
-    tf2::Matrix3x3 m(q);
-
-    // Roll Pitch and Yaw from rotation matrix
-    double roll, pitch; 
-    m.getRPY(roll, pitch, *w);
-   
-
     return true;
   }
   
